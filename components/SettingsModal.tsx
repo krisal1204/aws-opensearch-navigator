@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Server, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { OpenSearchConfig } from '../types';
 
@@ -53,8 +53,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     }
   }, [isOpen, config.proxyUrl]);
 
-  if (!isOpen) return null;
-
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
@@ -76,7 +74,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   };
 
   // 1. Discover Clusters via AWS
-  const handleDiscoverClusters = async () => {
+  // Wrapped in useCallback to safely use in useEffect dependency arrays
+  const handleDiscoverClusters = useCallback(async () => {
     setDiscovering(true);
     setDiscoveryError(null);
     try {
@@ -113,11 +112,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
         if (result.collections && result.collections.length > 0) {
             setDiscoveredCollections(result.collections);
-            // If we don't have a selection yet, or if the current input isn't in the new list, pick the first
-            // Note: We don't want to aggressively overwrite if the user typed something custom, unless it's empty
-            if (!nodesInput || !nodesInput.trim()) {
-                setNodesInput(result.collections[0].endpoint);
-            }
+            
+            // Auto-populate logic:
+            // If the current input is empty, OR if the current input is NOT in the new list of collections,
+            // we default to the first collection found.
+            setNodesInput(currentInput => {
+                const isCurrentInNewList = result.collections.some((c: any) => c.endpoint === currentInput?.trim());
+                if (!currentInput || !currentInput.trim() || !isCurrentInNewList) {
+                     return result.collections[0].endpoint;
+                }
+                return currentInput;
+            });
         } else {
             setDiscoveryError("No Serverless Collections found.");
             setDiscoveredCollections([]);
@@ -125,10 +130,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     } catch (e: any) {
         console.error("Discovery failed", e);
         setDiscoveryError(e.message || "Discovery failed");
+        setDiscoveredCollections([]);
     } finally {
         setDiscovering(false);
     }
-  };
+  }, [formData.proxyUrl, formData.region, formData.authType, formData.profile, formData.accessKey, formData.secretKey, formData.sessionToken]);
 
   // Auto-discover when profile or region changes
   useEffect(() => {
@@ -139,7 +145,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
          }, 100);
          return () => clearTimeout(timer);
      }
-  }, [formData.authType, formData.profile, formData.region, isOpen]);
+  }, [formData.authType, formData.profile, formData.region, isOpen, handleDiscoverClusters]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,6 +161,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     });
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
