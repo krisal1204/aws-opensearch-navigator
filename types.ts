@@ -3,6 +3,7 @@ export interface OpenSearchConfig {
   region: string;
   accessKey: string;
   secretKey: string;
+  sessionToken?: string; // AWS Session Token for temporary credentials
   index: string;
   geoField: string; // The field name mapped as geo_point in OpenSearch
   useDemoMode: boolean;

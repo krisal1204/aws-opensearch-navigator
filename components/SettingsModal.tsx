@@ -22,8 +22,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
   if (!isOpen) return null;
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    // Cast to access 'checked' only if it is an input element
+    const checked = (e.target as HTMLInputElement).checked;
+    
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -151,6 +154,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                <Key size={16} /> Session Token (Optional)
+              </label>
+              <textarea
+                name="sessionToken"
+                value={formData.sessionToken || ''}
+                onChange={handleChange}
+                placeholder="IQoJb3JpZ2luX2Vj..."
+                rows={2}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs"
+              />
             </div>
           </div>
         </form>

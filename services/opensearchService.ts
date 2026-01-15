@@ -149,6 +149,10 @@ export class OpenSearchService {
         const authString = btoa(`${config.accessKey}:${config.secretKey}`);
         headers['Authorization'] = `Basic ${authString}`;
     }
+    
+    if (config.sessionToken) {
+        headers['X-Amz-Security-Token'] = config.sessionToken;
+    }
 
     try {
       const data = await this.fetchWithFailover(config, path, { headers });
@@ -184,6 +188,10 @@ export class OpenSearchService {
     if (config.accessKey && config.secretKey) {
         const authString = btoa(`${config.accessKey}:${config.secretKey}`);
         headers['Authorization'] = `Basic ${authString}`;
+    }
+
+    if (config.sessionToken) {
+        headers['X-Amz-Security-Token'] = config.sessionToken;
     }
 
     try {

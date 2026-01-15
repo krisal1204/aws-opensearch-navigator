@@ -28,6 +28,7 @@ const INITIAL_CONFIG: OpenSearchConfig = {
   region: 'us-east-1',
   accessKey: '',
   secretKey: '',
+  sessionToken: '',
   index: 'logs-v1',
   geoField: 'location',
   useDemoMode: true
@@ -47,8 +48,23 @@ const INITIAL_FILTERS: SearchFilters = {
   size: 20
 };
 
+const STORAGE_KEY = 'opensearch_navigator_config_v1';
+
+const loadConfig = (): OpenSearchConfig => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return { ...INITIAL_CONFIG, ...JSON.parse(stored) };
+    }
+  } catch (err) {
+    console.warn('Failed to load config from storage', err);
+  }
+  return INITIAL_CONFIG;
+};
+
 export default function App() {
-  const [config, setConfig] = useState<OpenSearchConfig>(INITIAL_CONFIG);
+  // Initialize state with config loaded from localStorage
+  const [config, setConfig] = useState<OpenSearchConfig>(loadConfig);
   const [filters, setFilters] = useState<SearchFilters>(INITIAL_FILTERS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
@@ -58,6 +74,18 @@ export default function App() {
   
   const [selectedDoc, setSelectedDoc] = useState<OpenSearchHit<DocumentSource> | null>(null);
   const [availableFields, setAvailableFields] = useState<FieldDefinition[]>([]);
+
+  // Handle saving config to state and localStorage
+  const handleSaveConfig = (newConfig: OpenSearchConfig) => {
+    setConfig(newConfig);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newConfig));
+    } catch (e) {
+      console.error("Failed to save config to local storage", e);
+    }
+    // Reset data view when connection settings change
+    setData(null);
+  };
 
   // Fetch Mapping when config changes
   useEffect(() => {
@@ -384,7 +412,7 @@ export default function App() {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)}
         config={config}
-        onSave={setConfig}
+        onSave={handleSaveConfig}
       />
     </div>
   );
