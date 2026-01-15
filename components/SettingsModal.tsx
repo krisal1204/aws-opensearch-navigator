@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Key, Globe, Database, Map } from 'lucide-react';
+import { X, Server, Key, Globe, Database, Map, Network, Users } from 'lucide-react';
 import { OpenSearchConfig } from '../types';
 
 interface SettingsModalProps {
@@ -11,8 +11,9 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, config, onSave }) => {
   const [formData, setFormData] = useState<OpenSearchConfig>(config);
-  // Separate state for the textarea content
   const [nodesInput, setNodesInput] = useState(config.nodes.join('\n'));
+  const [profiles, setProfiles] = useState<string[]>([]);
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
 
   // Sync internal state if config prop updates
   useEffect(() => {
@@ -20,9 +21,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     setNodesInput(config.nodes.join('\n'));
   }, [config]);
 
+  // Load profiles when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const fetchProfiles = async () => {
+        setLoadingProfiles(true);
+        try {
+          // Assuming proxyUrl is running the backend
+          const proxy = config.proxyUrl || 'http://localhost:3000/api/proxy';
+          const baseUrl = new URL(proxy).origin;
+          
+          const res = await fetch(`${baseUrl}/api/aws-profiles`);
+          if (res.ok) {
+            const data = await res.json();
+            setProfiles(data.profiles || []);
+          }
+        } catch (e) {
+          console.warn("Could not load AWS profiles from backend", e);
+        } finally {
+          setLoadingProfiles(false);
+        }
+      };
+      fetchProfiles();
+    }
+  }, [isOpen, config.proxyUrl]);
+
   if (!isOpen) return null;
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     // Cast to access 'checked' only if it is an input element
     const checked = (e.target as HTMLInputElement).checked;
@@ -31,6 +57,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
+  };
+
+  const handleProfileChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const profile = e.target.value;
+    setFormData(prev => ({ ...prev, profile }));
+
+    if (!profile) return;
+
+    try {
+      const proxy = config.proxyUrl || 'http://localhost:3000/api/proxy';
+      const baseUrl = new URL(proxy).origin;
+      const res = await fetch(`${baseUrl}/api/aws-creds/${profile}`);
+      
+      if (res.ok) {
+        const creds = await res.json();
+        setFormData(prev => ({
+          ...prev,
+          accessKey: creds.accessKeyId || '',
+          secretKey: creds.secretAccessKey || '',
+          sessionToken: creds.sessionToken || '',
+          region: creds.region || prev.region
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to load profile credentials", err);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -65,7 +117,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4">
           
           <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm border border-blue-100 mb-4">
-            <strong>Note:</strong> Connecting directly to AWS OpenSearch Serverless from a browser typically requires a proxy to handle CORS and SigV4 signing. Enable <b>Demo Mode</b> to explore the UI without credentials.
+            <strong>Note:</strong> Connect to your OpenSearch Proxy (backend) for secure access, or use Demo Mode.
           </div>
 
           <div className="flex items-center mb-6">
@@ -83,6 +135,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
           </div>
 
           <div className={`space-y-4 transition-opacity ${formData.useDemoMode ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+            
+             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                <Network size={16} /> Proxy URL
+              </label>
+              <input
+                type="text"
+                name="proxyUrl"
+                value={formData.proxyUrl || ''}
+                onChange={handleChange}
+                placeholder="http://localhost:3000/api/proxy"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+              />
+              <p className="text-xs text-slate-400 mt-1">Local backend that handles AWS SigV4 signing</p>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                 <Globe size={16} /> Cluster Nodes
@@ -92,8 +160,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                 name="nodes"
                 value={nodesInput}
                 onChange={(e) => setNodesInput(e.target.value)}
-                placeholder="https://node-1.es.amazonaws.com&#10;https://node-2.es.amazonaws.com"
-                rows={3}
+                placeholder="https://<id>.us-east-1.aoss.amazonaws.com"
+                rows={2}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-sm"
               />
             </div>
@@ -101,14 +169,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                        <Database size={16} /> Index Name
+                        <Database size={16} /> Initial Index
                     </label>
                     <input
                         type="text"
                         name="index"
                         value={formData.index}
                         onChange={handleChange}
-                        placeholder="my-logs-index"
+                        placeholder="logs-v1"
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
                     />
                 </div>
@@ -125,6 +193,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
                     />
                 </div>
+            </div>
+
+             <div className="relative pt-2 pb-2">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-2 text-sm text-gray-500">AWS Credentials</span>
+              </div>
+            </div>
+
+            {/* Profile Selection */}
+            <div>
+               <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                 <Users size={16} /> Load from Local Profile
+               </label>
+               <select
+                 name="profile"
+                 value={formData.profile || ''}
+                 onChange={handleProfileChange}
+                 disabled={loadingProfiles || profiles.length === 0}
+                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+               >
+                 <option value="">-- Select Profile (Optional) --</option>
+                 {profiles.map(p => (
+                   <option key={p} value={p}>{p}</option>
+                 ))}
+               </select>
+               {profiles.length === 0 && !loadingProfiles && (
+                 <p className="text-xs text-orange-400 mt-1">No profiles found in ~/.aws/credentials</p>
+               )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -169,6 +268,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs"
               />
             </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                        <Globe size={16} /> Region
+                    </label>
+                    <input
+                        type="text"
+                        name="region"
+                        value={formData.region}
+                        onChange={handleChange}
+                        placeholder="us-east-1"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                    />
+                </div>
+            </div>
+
           </div>
         </form>
 

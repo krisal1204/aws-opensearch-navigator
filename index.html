@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OpenSearch Navigator</title>
+    <!-- Keeping Tailwind CDN for simplicity in this migration, usually this moves to PostCSS in production -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -21,16 +22,26 @@
   <script type="importmap">
 {
   "imports": {
+    "elysia": "https://esm.sh/elysia@^1.4.22",
+    "@elysiajs/cors": "https://esm.sh/@elysiajs/cors@^1.4.1",
+    "aws4fetch": "https://esm.sh/aws4fetch@^1.0.20",
+    "os": "https://esm.sh/os@^0.1.2",
+    "path": "https://esm.sh/path@^0.12.7",
+    "fs/": "https://esm.sh/fs@^0.0.1-security/",
+    "fs": "https://esm.sh/fs@^0.0.1-security",
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "@elysiajs/static": "https://esm.sh/@elysiajs/static@^1.4.7"
   }
 }
 </script>
 </head>
   <body class="bg-slate-50 text-slate-900 antialiased">
     <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

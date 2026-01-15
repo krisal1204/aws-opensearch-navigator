@@ -7,7 +7,8 @@ import {
   ChevronRight, 
   Database,
   Eye,
-  RefreshCw
+  RefreshCw,
+  List
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -20,7 +21,8 @@ import {
   OpenSearchHit, 
   DocumentSource,
   FieldDefinition,
-  FieldFilter 
+  FieldFilter,
+  IndexInfo
 } from './types';
 
 const INITIAL_CONFIG: OpenSearchConfig = {
@@ -31,7 +33,9 @@ const INITIAL_CONFIG: OpenSearchConfig = {
   sessionToken: '',
   index: 'logs-v1',
   geoField: 'location',
-  useDemoMode: true
+  useDemoMode: true,
+  // Default to relative path for production, but allow override
+  proxyUrl: '/api/proxy'
 };
 
 const INITIAL_FILTERS: SearchFilters = {
@@ -63,7 +67,6 @@ const loadConfig = (): OpenSearchConfig => {
 };
 
 export default function App() {
-  // Initialize state with config loaded from localStorage
   const [config, setConfig] = useState<OpenSearchConfig>(loadConfig);
   const [filters, setFilters] = useState<SearchFilters>(INITIAL_FILTERS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -74,8 +77,8 @@ export default function App() {
   
   const [selectedDoc, setSelectedDoc] = useState<OpenSearchHit<DocumentSource> | null>(null);
   const [availableFields, setAvailableFields] = useState<FieldDefinition[]>([]);
+  const [indices, setIndices] = useState<IndexInfo[]>([]);
 
-  // Handle saving config to state and localStorage
   const handleSaveConfig = (newConfig: OpenSearchConfig) => {
     setConfig(newConfig);
     try {
@@ -83,11 +86,25 @@ export default function App() {
     } catch (e) {
       console.error("Failed to save config to local storage", e);
     }
-    // Reset data view when connection settings change
     setData(null);
   };
 
-  // Fetch Mapping when config changes
+  // Fetch available indices when config nodes/creds change
+  useEffect(() => {
+    const loadIndices = async () => {
+       if (config.nodes.length > 0 || config.useDemoMode) {
+         try {
+           const list = await OpenSearchService.getIndices(config);
+           setIndices(list);
+         } catch (e) {
+           console.error("Error loading indices", e);
+         }
+       }
+    };
+    loadIndices();
+  }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl]);
+
+  // Fetch Mapping when config index changes
   useEffect(() => {
     const fetchMapping = async () => {
       try {
@@ -98,7 +115,7 @@ export default function App() {
       }
     };
     fetchMapping();
-  }, [config]);
+  }, [config.index, config.nodes, config.accessKey, config.useDemoMode]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -153,6 +170,10 @@ export default function App() {
     }));
   };
 
+  const handleIndexChange = (newIndex: string) => {
+      handleSaveConfig({ ...config, index: newIndex });
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col h-screen overflow-hidden">
       {/* Top Navigation Bar */}
@@ -196,14 +217,38 @@ export default function App() {
           
           {/* Filter Bar */}
           <div className="bg-white border-b border-slate-200 shadow-sm z-10 flex flex-col">
-            {/* Top Row: Search & Toggles */}
+            {/* Top Row: Index Select, Search & Toggles */}
             <div className="p-4 flex flex-col md:flex-row gap-4 max-w-7xl mx-auto w-full">
+              
+              {/* Index Selector */}
+              <div className="w-full md:w-48 relative flex-none">
+                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                   <List size={16} />
+                 </div>
+                 <select 
+                   value={config.index}
+                   onChange={(e) => handleIndexChange(e.target.value)}
+                   className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm font-medium text-slate-700 truncate"
+                 >
+                    {indices.length > 0 ? (
+                       indices.map(idx => (
+                         <option key={idx.index} value={idx.index}>{idx.index} ({idx.docsCount})</option>
+                       ))
+                    ) : (
+                       <option value={config.index}>{config.index}</option>
+                    )}
+                 </select>
+                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                    <ChevronDownIcon />
+                 </div>
+              </div>
+
               {/* Search Input */}
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input 
                   type="text" 
-                  placeholder="Search documents (e.g., error, service-a)..."
+                  placeholder="Search documents..."
                   className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all"
                   value={filters.query}
                   onChange={(e) => setFilters(prev => ({ ...prev, query: e.target.value, from: 0 }))}
@@ -417,3 +462,19 @@ export default function App() {
     </div>
   );
 }
+
+const ChevronDownIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);

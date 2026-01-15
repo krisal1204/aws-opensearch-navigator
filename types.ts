@@ -4,9 +4,11 @@ export interface OpenSearchConfig {
   accessKey: string;
   secretKey: string;
   sessionToken?: string; // AWS Session Token for temporary credentials
+  profile?: string; // Local AWS Profile name
   index: string;
   geoField: string; // The field name mapped as geo_point in OpenSearch
   useDemoMode: boolean;
+  proxyUrl?: string; // URL of the local proxy server
 }
 
 export interface GeoFilterState {
@@ -71,4 +73,12 @@ export interface DocumentSource {
   timestamp?: string;
   status?: string;
   [key: string]: any;
+}
+
+export interface IndexInfo {
+  index: string;
+  health: string;
+  status: string;
+  docsCount: string;
+  storeSize: string;
 }

@@ -1,4 +1,4 @@
-import { OpenSearchConfig, SearchFilters, OpenSearchResponse, DocumentSource, FieldDefinition } from '../types';
+import { OpenSearchConfig, SearchFilters, OpenSearchResponse, DocumentSource, FieldDefinition, IndexInfo } from '../types';
 import { generateMockResponse, MOCK_MAPPING } from './mockData';
 
 export class OpenSearchService {
@@ -36,22 +36,16 @@ export class OpenSearchService {
 
     // Dynamic Field Filters
     filters.fieldFilters.forEach(f => {
-      // Helper to convert numeric strings to numbers if they look like numbers
-      // This is a simple heuristic; strictly speaking we should check the mapping type,
-      // but OpenSearch often handles stringified numbers in ranges okay.
       const val = !isNaN(Number(f.value)) && f.value.trim() !== '' ? Number(f.value) : f.value;
 
       switch (f.operator) {
         case 'eq':
-          // Use 'term' for precise matching on keyword/numbers
           filter.push({ term: { [f.field]: val } });
           break;
         case 'neq':
           mustNot.push({ term: { [f.field]: val } });
           break;
         case 'contains':
-          // Use wildcards for partial matches (expensive but useful for exploration)
-          // or 'match' for full text analysis
           must.push({ match: { [f.field]: val } });
           break;
         case 'gt':
@@ -96,44 +90,83 @@ export class OpenSearchService {
     return fields;
   }
 
-  // Helper to try request against multiple nodes
-  private static async fetchWithFailover(config: OpenSearchConfig, path: string, options: RequestInit): Promise<any> {
-    const nodes = config.nodes && config.nodes.length > 0 ? config.nodes : [];
+  // Unified fetcher that decides whether to use Proxy or Direct
+  private static async executeRequest(config: OpenSearchConfig, path: string, method: string = 'GET', bodyData?: any): Promise<any> {
+     const nodes = config.nodes && config.nodes.length > 0 ? config.nodes : [];
     
-    if (nodes.length === 0) {
-      throw new Error("No OpenSearch nodes configured.");
+     if (nodes.length === 0) {
+       throw new Error("No OpenSearch nodes configured.");
+     }
+ 
+     // Use the first node for simplicity in proxy mode, or iterate if needed
+     // For this implementation, we try node 0.
+     const node = nodes[0].replace(/\/$/, '');
+     const cleanPath = path.startsWith('/') ? path : `/${path}`;
+     const targetUrl = `${node}${cleanPath}`;
+
+     const proxyUrl = config.proxyUrl || 'http://localhost:3000/api/proxy';
+
+     // PROXY REQUEST
+     const payload = {
+       url: targetUrl,
+       method,
+       data: bodyData,
+       region: config.region,
+       credentials: {
+         accessKey: config.accessKey,
+         secretKey: config.secretKey,
+         sessionToken: config.sessionToken
+       }
+     };
+
+     try {
+       const res = await fetch(proxyUrl, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify(payload)
+       });
+
+       if (!res.ok) {
+         throw new Error(`Proxy unreachable: ${res.statusText}`);
+       }
+
+       const result = await res.json();
+       if (result.status >= 300) {
+         const msg = result.data?.error || result.data?.message || JSON.stringify(result.data) || 'Unknown Error';
+         throw new Error(`OpenSearch Error (${result.status}): ${msg}`);
+       }
+
+       return result.data;
+     } catch (err) {
+       console.error("Request execution failed", err);
+       throw err;
+     }
+  }
+
+  static async getIndices(config: OpenSearchConfig): Promise<IndexInfo[]> {
+    if (config.useDemoMode) {
+      return [{ index: 'demo-index', health: 'green', status: 'open', docsCount: '1250', storeSize: '10mb' }];
     }
 
-    let lastError: Error | null = null;
-
-    for (const node of nodes) {
-      // Remove trailing slash from node if present, ensure path starts with slash
-      const cleanNode = node.replace(/\/$/, '');
-      const cleanPath = path.startsWith('/') ? path : `/${path}`;
-      const url = `${cleanNode}${cleanPath}`;
-
-      try {
-        const response = await fetch(url, options);
-        
-        if (!response.ok) {
-           // If it's a 4xx error (client error), we probably shouldn't retry on other nodes 
-           // as the request is likely invalid, but for connection issues (5xx or network), we should.
-           // For simplicity in this demo, we throw for everything to catch block, 
-           // but strictly we might want to return 4xx immediately.
-           // However, OpenSearch errors are often JSON bodies we want to read.
-           const errorText = await response.text();
-           throw new Error(`${response.status} ${response.statusText}: ${errorText}`);
-        }
-
-        return await response.json();
-      } catch (err: any) {
-        console.warn(`Failed to connect to node ${node}:`, err);
-        lastError = err;
-        // Continue to next node
+    try {
+      // Use _cat/indices with json format
+      const data = await this.executeRequest(config, '/_cat/indices?format=json', 'GET');
+      
+      if (Array.isArray(data)) {
+        return data.map((item: any) => ({
+          index: item.index,
+          health: item.health,
+          status: item.status,
+          docsCount: item['docs.count'],
+          storeSize: item['store.size']
+        }));
       }
+      return [];
+    } catch (err) {
+      console.warn("Failed to fetch indices", err);
+      // Return empty array instead of throwing to prevent UI crash
+      return [];
     }
-
-    throw lastError || new Error("All nodes failed.");
   }
 
   static async getMapping(config: OpenSearchConfig): Promise<FieldDefinition[]> {
@@ -142,32 +175,19 @@ export class OpenSearchService {
       return this.flattenMapping(indexMapping.properties);
     }
 
-    const path = `/${config.index}/_mapping`;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-    if (config.accessKey && config.secretKey) {
-        const authString = btoa(`${config.accessKey}:${config.secretKey}`);
-        headers['Authorization'] = `Basic ${authString}`;
-    }
-    
-    if (config.sessionToken) {
-        headers['X-Amz-Security-Token'] = config.sessionToken;
-    }
-
     try {
-      const data = await this.fetchWithFailover(config, path, { headers });
+      const data = await this.executeRequest(config, `/${config.index}/_mapping`, 'GET');
       
       // The response key is usually the index name
+      // data might be { "my-index": { mappings: ... } }
       const indexName = Object.keys(data)[0];
       const properties = data[indexName]?.mappings?.properties || {};
       
       return this.flattenMapping(properties);
     } catch (error) {
       console.error("Failed to get mapping", error);
-      // Fallback to basic fields if mapping fails
       return [
         { path: 'id', type: 'keyword' },
-        { path: 'status', type: 'keyword' },
         { path: 'timestamp', type: 'date' }
       ];
     }
@@ -181,28 +201,6 @@ export class OpenSearchService {
     const dsl = this.buildDsl(filters, config);
     const path = `/${config.index}/_search`;
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (config.accessKey && config.secretKey) {
-        const authString = btoa(`${config.accessKey}:${config.secretKey}`);
-        headers['Authorization'] = `Basic ${authString}`;
-    }
-
-    if (config.sessionToken) {
-        headers['X-Amz-Security-Token'] = config.sessionToken;
-    }
-
-    try {
-      return await this.fetchWithFailover(config, path, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(dsl)
-      });
-    } catch (error) {
-      console.error("Search failed", error);
-      throw error;
-    }
+    return await this.executeRequest(config, path, 'POST', dsl);
   }
 }
