@@ -76,6 +76,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     }));
   };
 
+  const handleCollectionSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    setNodesInput(value);
+    // Auto-disable demo mode if user selects a real collection
+    if (value && value.trim().length > 0) {
+        setFormData(prev => ({ ...prev, useDemoMode: false }));
+    }
+  };
+
   // 1. Discover Clusters via AWS
   // Wrapped in useCallback to safely use in useEffect dependency arrays
   const handleDiscoverClusters = useCallback(async () => {
@@ -122,6 +131,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
             setNodesInput(currentInput => {
                 const isCurrentInNewList = result.collections.some((c: any) => c.endpoint === currentInput?.trim());
                 if (!currentInput || !currentInput.trim() || !isCurrentInNewList) {
+                     // We also want to disable demo mode if we auto-select a collection
+                     setFormData(prev => ({ ...prev, useDemoMode: false }));
                      return result.collections[0].endpoint;
                 }
                 return currentInput;
@@ -158,9 +169,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
+    // If the user has entered nodes, they likely want to connect to them.
+    // Force disable demo mode if nodes are present, unless they are deliberately emptying the list.
+    const shouldDisableDemo = cleanNodes.length > 0;
+
     onSave({
       ...formData,
-      nodes: cleanNodes
+      nodes: cleanNodes,
+      useDemoMode: shouldDisableDemo ? false : formData.useDemoMode
     });
     onClose();
   };
@@ -310,7 +326,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                    {discoveredCollections.length > 0 ? (
                        <select
                            value={nodesInput}
-                           onChange={(e) => setNodesInput(e.target.value)}
+                           onChange={handleCollectionSelect}
                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
                        >
                            <option value="" disabled>Select Collection</option>
