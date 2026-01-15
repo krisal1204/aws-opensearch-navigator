@@ -105,7 +105,7 @@ export class OpenSearchService {
      const cleanPath = path.startsWith('/') ? path : `/${path}`;
      const targetUrl = `${node}${cleanPath}`;
 
-     const proxyUrl = config.proxyUrl || 'http://localhost:3000/api/proxy';
+     const proxyUrl = config.proxyUrl || '/api/proxy';
 
      // PROXY REQUEST
      const payload: any = {

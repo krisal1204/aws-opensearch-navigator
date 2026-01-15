@@ -5,12 +5,14 @@ import {
   Settings, 
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown,
   Database,
   Eye,
   RefreshCw,
   List,
   Columns,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -37,7 +39,7 @@ const INITIAL_CONFIG: OpenSearchConfig = {
   profile: 'default',
   index: 'logs-v1',
   useDemoMode: true,
-  proxyUrl: 'http://localhost:3000/api/proxy'
+  proxyUrl: '/api/proxy'
 };
 
 const INITIAL_FILTERS: SearchFilters = {
@@ -87,6 +89,8 @@ export default function App() {
   const [selectedDoc, setSelectedDoc] = useState<OpenSearchHit<DocumentSource> | null>(null);
   const [availableFields, setAvailableFields] = useState<FieldDefinition[]>([]);
   const [indices, setIndices] = useState<IndexInfo[]>([]);
+  const [loadingIndices, setLoadingIndices] = useState(false);
+  const [indicesError, setIndicesError] = useState<string | null>(null);
 
   // Table Column State
   const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
@@ -117,15 +121,19 @@ export default function App() {
   // Fetch available indices
   useEffect(() => {
     const loadIndices = async () => {
-       // Clear indices to indicate loading and ensure UI updates
        setIndices([]);
+       setIndicesError(null);
        
        if (config.nodes.length > 0 || config.useDemoMode) {
+         setLoadingIndices(true);
          try {
            const list = await OpenSearchService.getIndices(config);
            setIndices(list);
-         } catch (e) {
+         } catch (e: any) {
            console.error("Error loading indices", e);
+           setIndicesError(e.message || "Failed to load indices");
+         } finally {
+            setLoadingIndices(false);
          }
        }
     };
@@ -296,25 +304,45 @@ export default function App() {
               
               {/* Index Selector */}
               <div className="w-full md:w-48 relative flex-none">
-                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none z-10">
                    <List size={16} />
                  </div>
-                 <select 
-                   value={config.index}
-                   onChange={(e) => handleIndexChange(e.target.value)}
-                   className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm font-medium text-slate-700 truncate"
-                 >
-                    {indices.length > 0 ? (
-                       indices.map(idx => (
-                         <option key={idx.index} value={idx.index}>{idx.index} ({idx.docsCount})</option>
-                       ))
-                    ) : (
-                       <option value={config.index}>{config.index}</option>
-                    )}
-                 </select>
-                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                    <ChevronDownIcon />
-                 </div>
+                 
+                 {loadingIndices ? (
+                    <div className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500 italic">
+                        Loading...
+                    </div>
+                 ) : (indices.length > 0) ? (
+                     <div className="relative">
+                        <select 
+                        value={config.index}
+                        onChange={(e) => handleIndexChange(e.target.value)}
+                        className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm font-medium text-slate-700 truncate cursor-pointer"
+                        >
+                            {indices.map(idx => (
+                                <option key={idx.index} value={idx.index}>{idx.index} ({idx.docsCount})</option>
+                            ))}
+                        </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                            <ChevronDown size={14} />
+                        </div>
+                     </div>
+                 ) : (
+                    <div className="relative">
+                        <input 
+                            type="text" 
+                            value={config.index}
+                            onChange={(e) => handleIndexChange(e.target.value)}
+                            className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm text-slate-700 placeholder-slate-400"
+                            placeholder="Enter Index Name"
+                        />
+                        {indicesError && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 text-red-400" title={indicesError}>
+                                <AlertCircle size={16} />
+                            </div>
+                        )}
+                    </div>
+                 )}
               </div>
 
               {/* Search Input */}
@@ -346,36 +374,19 @@ export default function App() {
                     </button>
                     {isColumnSelectorOpen && (
                         <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-lg shadow-xl border border-slate-200 z-50 animate-in slide-in-from-top-2 duration-200 flex flex-col max-h-96">
-                            <div className="p-3 border-b border-slate-100 font-semibold text-xs text-slate-500 uppercase">
-                                Visible Columns
-                            </div>
+                            <div className="p-3 border-b border-slate-100 font-semibold text-xs text-slate-500 uppercase">Visible Columns</div>
                             <div className="overflow-y-auto flex-1 p-2 space-y-1">
                                 <label className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={visibleColumns.includes('_id')} 
-                                        onChange={() => toggleColumn('_id')}
-                                        className="rounded text-accent focus:ring-accent"
-                                    />
+                                    <input type="checkbox" checked={visibleColumns.includes('_id')} onChange={() => toggleColumn('_id')} className="rounded text-accent focus:ring-accent" />
                                     <span className="text-sm text-slate-700">ID</span>
                                 </label>
                                 <label className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={visibleColumns.includes('_score')} 
-                                        onChange={() => toggleColumn('_score')}
-                                        className="rounded text-accent focus:ring-accent"
-                                    />
+                                    <input type="checkbox" checked={visibleColumns.includes('_score')} onChange={() => toggleColumn('_score')} className="rounded text-accent focus:ring-accent" />
                                     <span className="text-sm text-slate-700">Score</span>
                                 </label>
                                 {availableFields.map(field => (
                                     <label key={field.path} className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={visibleColumns.includes(field.path)} 
-                                            onChange={() => toggleColumn(field.path)}
-                                            className="rounded text-accent focus:ring-accent"
-                                        />
+                                        <input type="checkbox" checked={visibleColumns.includes(field.path)} onChange={() => toggleColumn(field.path)} className="rounded text-accent focus:ring-accent" />
                                         <span className="text-sm text-slate-700 truncate" title={field.path}>
                                             {field.path} <span className="text-xs text-slate-400">({field.type})</span>
                                         </span>
@@ -386,185 +397,183 @@ export default function App() {
                     )}
                  </div>
 
-                <button 
-                  onClick={toggleGeoFilter}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
-                    filters.geo.enabled 
-                      ? 'bg-blue-50 text-accent border-blue-200' 
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                  }`}
-                  title="Toggle Geo Filter"
-                >
-                  <MapPin size={18} />
-                  Geo
-                </button>
-              </div>
-            </div>
-            
-            {/* Bottom Row: Dynamic Filters */}
-            <div className="px-4 pb-4 border-t border-slate-100 bg-slate-50/50">
-              <div className="max-w-7xl mx-auto pt-3">
-                 <FilterBuilder 
-                   fields={availableFields} 
-                   activeFilters={filters.fieldFilters}
-                   onAddFilter={addFieldFilter}
-                   onRemoveFilter={removeFieldFilter}
-                 />
+                 <button 
+                    onClick={toggleGeoFilter}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
+                        filters.geo.enabled 
+                        ? 'bg-blue-50 text-accent border-blue-200' 
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}
+                    title="Toggle Geo Filter"
+                 >
+                    <MapPin size={18} />
+                    Geo
+                 </button>
               </div>
             </div>
 
-            {/* Geo Settings Drawer */}
+            {/* Filter Builder Area */}
+            <div className="px-4 pb-4 border-t border-slate-100 bg-slate-50/50">
+               <div className="max-w-7xl mx-auto pt-3">
+                  <FilterBuilder 
+                    fields={availableFields} 
+                    activeFilters={filters.fieldFilters} 
+                    onAddFilter={addFieldFilter}
+                    onRemoveFilter={removeFieldFilter}
+                  />
+               </div>
+            </div>
+
+            {/* Geo Filter Panel */}
             {filters.geo.enabled && (
-               <div className="bg-blue-50/50 border-t border-blue-100 px-4 py-3 animate-in slide-in-from-top-2 fade-in duration-200">
-                  <div className="max-w-7xl mx-auto flex items-end gap-4">
-                     <div className="w-48">
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Geo Point Field</label>
-                      <input 
-                        type="text" 
-                        value={filters.geo.geoField}
-                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, geoField: e.target.value } }))}
-                        placeholder="location"
-                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Latitude</label>
+              <div className="bg-blue-50/50 border-t border-blue-100 px-4 py-3 animate-in slide-in-from-top-2 fade-in duration-200">
+                <div className="max-w-7xl mx-auto flex items-end gap-4">
+                  <div className="w-48">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Geo Point Field</label>
+                    <input 
+                      type="text" 
+                      value={filters.geo.geoField}
+                      onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, geoField: e.target.value } }))}
+                      placeholder="location"
+                      className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Latitude</label>
+                    <input 
+                      type="number" 
+                      value={filters.geo.latitude}
+                      onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, latitude: parseFloat(e.target.value) } }))}
+                      className="w-32 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Longitude</label>
+                    <input 
+                      type="number" 
+                      value={filters.geo.longitude}
+                      onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, longitude: parseFloat(e.target.value) } }))}
+                      className="w-32 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Radius</label>
+                    <div className="flex">
                       <input 
                         type="number" 
-                        value={filters.geo.latitude}
-                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, latitude: parseFloat(e.target.value) } }))}
-                        className="w-32 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+                        value={filters.geo.radius}
+                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, radius: parseFloat(e.target.value) } }))}
+                        className="w-24 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-l focus:border-accent focus:ring-1 focus:ring-accent outline-none border-r-0"
                       />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Longitude</label>
-                      <input 
-                        type="number" 
-                        value={filters.geo.longitude}
-                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, longitude: parseFloat(e.target.value) } }))}
-                        className="w-32 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none"
-                      />
-                    </div>
-                    <div>
-                       <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Radius</label>
-                       <div className="flex">
-                           <input 
-                             type="number" 
-                             value={filters.geo.radius}
-                             onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, radius: parseFloat(e.target.value) } }))}
-                             className="w-24 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-l focus:border-accent focus:ring-1 focus:ring-accent outline-none border-r-0"
-                           />
-                           <select
-                              value={filters.geo.unit}
-                              onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, unit: e.target.value as 'km' | 'mi' } }))}
-                              className="bg-slate-100 border border-slate-200 text-sm px-2 rounded-r focus:outline-none focus:border-accent hover:bg-slate-200 cursor-pointer text-slate-700"
-                           >
-                              <option value="km">KM</option>
-                              <option value="mi">Miles</option>
-                           </select>
-                       </div>
-                    </div>
-                    <div className="flex-1 text-right text-xs text-slate-400 pb-2">
-                       Filtering docs within {filters.geo.radius} {filters.geo.unit === 'mi' ? 'miles' : 'km'} of [{filters.geo.latitude}, {filters.geo.longitude}]
+                      <select 
+                        value={filters.geo.unit}
+                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, unit: e.target.value as any } }))}
+                        className="bg-slate-100 border border-slate-200 text-sm px-2 rounded-r focus:outline-none focus:border-accent hover:bg-slate-200 cursor-pointer text-slate-700"
+                      >
+                        <option value="km">KM</option>
+                        <option value="mi">Miles</option>
+                      </select>
                     </div>
                   </div>
-               </div>
+                  <div className="flex-1 text-right text-xs text-slate-400 pb-2">
+                    Filtering docs within {filters.geo.radius} {filters.geo.unit === 'mi' ? 'miles' : 'km'} of [{filters.geo.latitude}, {filters.geo.longitude}]
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Data Table */}
+          {/* Results Area */}
           <div className="flex-1 overflow-auto bg-slate-50 p-4">
             <div className="max-w-7xl mx-auto bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden flex flex-col h-full">
-              
-              {/* Table Header */}
+              {/* Results Header */}
               <div className="flex items-center justify-between px-6 py-3 border-b border-slate-100 bg-white sticky top-0 z-10">
                 <div className="text-sm text-slate-500">
                   {loading ? 'Searching...' : (
                     <>Found <span className="font-semibold text-slate-900">{data?.hits.total.value ?? 0}</span> results</>
                   )}
                 </div>
+                
                 <div className="flex items-center gap-2">
-                   <button 
-                     disabled={filters.from === 0 || loading}
-                     onClick={() => handlePageChange('prev')}
-                     className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
-                   >
-                     <ChevronLeft size={20} />
-                   </button>
-                   <span className="text-sm font-medium text-slate-600">
+                  <button 
+                    disabled={filters.from === 0 || loading}
+                    onClick={() => handlePageChange('prev')}
+                    className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <span className="text-sm font-medium text-slate-600">
                      {filters.from + 1}-{Math.min((data?.hits.total.value || 0), filters.from + filters.size)}
-                   </span>
-                   <button 
-                     disabled={!data || (filters.from + filters.size >= data.hits.total.value) || loading}
-                     onClick={() => handlePageChange('next')}
-                     className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
-                   >
-                     <ChevronRight size={20} />
-                   </button>
+                  </span>
+                  <button 
+                    disabled={!data || (filters.from + filters.size >= data.hits.total.value) || loading}
+                    onClick={() => handlePageChange('next')}
+                    className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
                 </div>
               </div>
 
-              {/* Table Body */}
+              {/* Table / List */}
               <div className="flex-1 overflow-auto">
-                 {loading && !data ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                       <RefreshCw className="animate-spin mb-2" size={32} />
-                       <p>Loading data...</p>
-                    </div>
-                 ) : error ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-red-500 bg-red-50 p-6 rounded m-4">
-                       <p className="font-bold">Error fetching data</p>
-                       <p className="text-sm mt-1">{error}</p>
-                    </div>
-                 ) : (
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold sticky top-0">
-                        <tr>
-                          {visibleColumns.map(col => (
-                              <th key={col} className="px-6 py-3 border-b border-slate-200 truncate max-w-[150px]" title={col}>
-                                  {col.replace(/_/g, '').toUpperCase()}
-                              </th>
-                          ))}
-                          <th className="px-6 py-3 border-b border-slate-200 text-right w-24">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {data?.hits.hits.map((hit) => (
-                          <tr key={hit._id} className="hover:bg-slate-50 transition-colors group">
-                            {visibleColumns.map(col => (
-                                <td key={`${hit._id}-${col}`} className="px-6 py-3 border-b border-slate-50">
-                                    {renderCell(hit, col)}
-                                </td>
-                            ))}
-                            <td className="px-6 py-3 text-right">
-                               <button 
-                                 onClick={() => setSelectedDoc(hit)}
-                                 className="text-accent hover:text-blue-700 font-medium text-sm flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-full"
-                               >
-                                 <Eye size={16} />
-                               </button>
-                            </td>
-                          </tr>
+                {loading && !data ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+                    <RefreshCw className="animate-spin mb-2" size={32} />
+                    <p>Loading data...</p>
+                  </div>
+                ) : error ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-red-500 bg-red-50 p-6 rounded m-4">
+                    <p className="font-bold">Error fetching data</p>
+                    <p className="text-sm mt-1">{error}</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold sticky top-0">
+                      <tr>
+                        {visibleColumns.map(col => (
+                          <th key={col} className="px-6 py-3 border-b border-slate-200 truncate max-w-[150px]" title={col}>
+                            {col.replace(/_/g, '').toUpperCase()}
+                          </th>
                         ))}
-                      </tbody>
-                    </table>
-                 )}
+                        <th className="px-6 py-3 border-b border-slate-200 text-right w-24">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {data?.hits.hits.map((hit) => (
+                        <tr key={hit._id} className="hover:bg-slate-50 transition-colors group">
+                          {visibleColumns.map(col => (
+                            <td key={`${hit._id}-${col}`} className="px-6 py-3 border-b border-slate-50">
+                              {renderCell(hit, col)}
+                            </td>
+                          ))}
+                          <td className="px-6 py-3 text-right">
+                             <button 
+                               onClick={() => setSelectedDoc(hit)}
+                               className="text-accent hover:text-blue-700 font-medium text-sm flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-full"
+                             >
+                               <Eye size={16} />
+                             </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>
+          
         </main>
 
-        {/* JSON Detail Slide-over Panel */}
+        {/* Document Details Sidebar (Overlay) */}
         {selectedDoc && (
           <div className="absolute inset-0 z-50 flex justify-end bg-black/20 backdrop-blur-[1px]" onClick={() => setSelectedDoc(null)}>
-            <div 
-              className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300"
-              onClick={e => e.stopPropagation()}
-            >
+            <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-800">Document Details</h3>
-                  <p className="text-xs font-mono text-slate-500 mt-0.5">{selectedDoc._id}</p>
+                   <h3 className="text-lg font-bold text-slate-800">Document Details</h3>
+                   <p className="text-xs font-mono text-slate-500 mt-0.5">{selectedDoc._id}</p>
                 </div>
                 <button 
                   onClick={() => setSelectedDoc(null)}
@@ -579,8 +588,8 @@ export default function App() {
                 </div>
               </div>
               <div className="p-4 border-t border-slate-100 bg-slate-50 text-xs text-slate-400 flex justify-between">
-                 <span>Index: {selectedDoc._index}</span>
-                 <span>Score: {selectedDoc._score}</span>
+                <span>Index: {selectedDoc._index}</span>
+                <span>Score: {selectedDoc._score}</span>
               </div>
             </div>
           </div>
@@ -589,26 +598,10 @@ export default function App() {
 
       <SettingsModal 
         isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={() => setIsSettingsOpen(false)} 
         config={config}
         onSave={handleSaveConfig}
       />
     </div>
   );
 }
-
-const ChevronDownIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="m6 9 6 6 6-6" />
-  </svg>
-);

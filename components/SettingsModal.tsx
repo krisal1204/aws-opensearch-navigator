@@ -35,10 +35,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
       const fetchProfiles = async () => {
         setLoadingProfiles(true);
         try {
-          const proxy = config.proxyUrl || 'http://localhost:3000/api/proxy';
-          const baseUrl = new URL(proxy, window.location.origin).origin;
+          const proxy = config.proxyUrl || '/api/proxy';
+          // Robust replacement to find the correct profiles endpoint relative to the proxy path
+          // If proxy is /api/proxy -> /api/aws-profiles
+          // If proxy is http://host/api/proxy -> http://host/api/aws-profiles
+          const profilesUrl = proxy.replace(/\/proxy\/?$/, '/aws-profiles');
           
-          const res = await fetch(`${baseUrl}/api/aws-profiles`);
+          const res = await fetch(profilesUrl);
           if (res.ok) {
             const data = await res.json();
             setProfiles(data.profiles || []);
@@ -79,9 +82,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     setDiscovering(true);
     setDiscoveryError(null);
     try {
-        const proxy = formData.proxyUrl || 'http://localhost:3000/api/proxy';
-        // Construct discovery endpoint
-        const baseUrl = proxy.replace(/\/proxy$/, '/aws-discovery');
+        const proxy = formData.proxyUrl || '/api/proxy';
+        // Robust replacement for discovery endpoint
+        const baseUrl = proxy.replace(/\/proxy\/?$/, '/aws-discovery');
         
         const payload: any = {
             region: formData.region,
@@ -355,7 +358,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                                 name="proxyUrl"
                                 value={formData.proxyUrl || ''}
                                 onChange={handleChange}
-                                placeholder="http://localhost:3000/api/proxy"
+                                placeholder="/api/proxy"
                                 className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:border-accent outline-none"
                             />
                         </div>
