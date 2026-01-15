@@ -182,6 +182,14 @@ export default function App() {
   }, [config.index, config.nodes, config.accessKey, config.useDemoMode, config.authType, config.profile, config.region]);
 
   const fetchData = useCallback(async () => {
+    // CRITICAL: Don't fire search if we are in a bad state
+    // We only search if:
+    // 1. We are in Demo Mode OR
+    // 2. We are in Live Mode AND there are no index loading errors AND indices are not currently loading
+    if (!config.useDemoMode && (indicesError || loadingIndices)) {
+        return; 
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -192,7 +200,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [config, filters]);
+  }, [config, filters, indicesError, loadingIndices]);
 
   // Debounced fetch for query changes
   useEffect(() => {
@@ -521,6 +529,17 @@ export default function App() {
                   <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                     <RefreshCw className="animate-spin mb-2" size={32} />
                     <p>Loading data...</p>
+                  </div>
+                ) : indicesError && !config.useDemoMode ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-slate-400 bg-red-50 p-6 rounded m-4 border border-red-100">
+                     <div className="bg-red-100 p-3 rounded-full mb-3">
+                        <AlertCircle className="text-red-500" size={32} />
+                     </div>
+                     <p className="font-bold text-red-600 text-lg">Connection Error</p>
+                     <p className="text-sm mt-2 text-red-500 text-center max-w-lg font-mono bg-white p-3 rounded border border-red-200 shadow-sm">{indicesError}</p>
+                     <p className="text-xs mt-4 text-slate-500">
+                        Failed to list indices. Please check your AWS credentials, region, and permissions (requires <code className="bg-slate-100 px-1 rounded">es:ESHttpGet</code> on <code className="bg-slate-100 px-1 rounded">/_cat/indices</code>).
+                     </p>
                   </div>
                 ) : error ? (
                   <div className="flex flex-col items-center justify-center h-64 text-red-500 bg-red-50 p-6 rounded m-4">

@@ -156,25 +156,19 @@ export class OpenSearchService {
       return [{ index: 'demo-index', health: 'green', status: 'open', docsCount: '1250', storeSize: '10mb' }];
     }
 
-    try {
-      // Use _cat/indices with json format
-      const data = await this.executeRequest(config, '/_cat/indices?format=json', 'GET');
-      
-      if (Array.isArray(data)) {
-        return data.map((item: any) => ({
-          index: item.index,
-          health: item.health,
-          status: item.status,
-          docsCount: item['docs.count'],
-          storeSize: item['store.size']
-        }));
-      }
-      return [];
-    } catch (err) {
-      console.warn("Failed to fetch indices", err);
-      // Return empty array instead of throwing to prevent UI crash
-      return [];
+    // Removed try/catch block to allow errors (like 403 Forbidden) to propagate to the UI
+    const data = await this.executeRequest(config, '/_cat/indices?format=json', 'GET');
+    
+    if (Array.isArray(data)) {
+      return data.map((item: any) => ({
+        index: item.index,
+        health: item.health,
+        status: item.status,
+        docsCount: item['docs.count'],
+        storeSize: item['store.size']
+      }));
     }
+    return [];
   }
 
   static async getMapping(config: OpenSearchConfig): Promise<FieldDefinition[]> {
