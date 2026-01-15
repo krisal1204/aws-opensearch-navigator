@@ -161,19 +161,34 @@ export class OpenSearchService {
       return [{ index: 'demo-index', health: 'green', status: 'open', docsCount: '1250', storeSize: '10mb' }];
     }
 
-    // Removed try/catch block to allow errors (like 403 Forbidden) to propagate to the UI
-    const data = await this.executeRequest(config, '/_cat/indices?format=json', 'GET');
-    
-    if (Array.isArray(data)) {
-      return data.map((item: any) => ({
-        index: item.index,
-        health: item.health,
-        status: item.status,
-        docsCount: item['docs.count'],
-        storeSize: item['store.size']
-      }));
+    try {
+      // _cat/indices is often restricted or unavailable in Serverless (AOSS)
+      // We try it, but if it fails, we fallback to the configured index to allow the UI to function.
+      const data = await this.executeRequest(config, '/_cat/indices?format=json', 'GET');
+      
+      if (Array.isArray(data)) {
+        return data.map((item: any) => ({
+          index: item.index,
+          health: item.health,
+          status: item.status,
+          docsCount: item['docs.count'],
+          storeSize: item['store.size']
+        }));
+      }
+      return [];
+    } catch (error: any) {
+      console.warn("Could not list indices (likely Serverless environment). Defaulting to configured index.", error);
+      
+      // Fallback for Serverless: return the currently configured index as the only available index
+      // This allows the app to proceed to search without blocking on the index list error.
+      return [{
+        index: config.index,
+        health: 'unknown',
+        status: 'open',
+        docsCount: '?',
+        storeSize: '?'
+      }];
     }
-    return [];
   }
 
   static async getMapping(config: OpenSearchConfig): Promise<FieldDefinition[]> {

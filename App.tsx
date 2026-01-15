@@ -16,7 +16,8 @@ import {
   Filter as FilterIcon,
   X,
   Loader2,
-  GripVertical
+  GripVertical,
+  Crosshair
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -110,6 +111,7 @@ export default function App() {
   const [indices, setIndices] = useState<IndexInfo[]>([]);
   const [loadingIndices, setLoadingIndices] = useState(false);
   const [indicesError, setIndicesError] = useState<string | null>(null);
+  const [locatingUser, setLocatingUser] = useState(false);
 
   // Table Column State
   const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
@@ -329,6 +331,35 @@ export default function App() {
     }));
   };
 
+  const handleUseMyLocation = () => {
+      setLocatingUser(true);
+      if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+              (position) => {
+                  setFilters(prev => ({
+                      ...prev,
+                      from: 0,
+                      geo: {
+                          ...prev.geo,
+                          latitude: parseFloat(position.coords.latitude.toFixed(6)),
+                          longitude: parseFloat(position.coords.longitude.toFixed(6)),
+                          enabled: true
+                      }
+                  }));
+                  setLocatingUser(false);
+              },
+              (err) => {
+                  console.error("Geo Location Error", err);
+                  alert("Could not access location: " + err.message);
+                  setLocatingUser(false);
+              }
+          );
+      } else {
+          alert("Geolocation is not supported by this browser.");
+          setLocatingUser(false);
+      }
+  };
+
   const addFieldFilter = (filter: FieldFilter) => {
     setFilters(prev => ({
       ...prev,
@@ -511,7 +542,8 @@ export default function App() {
                     <div className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-sm text-gray-500 italic border border-transparent">
                         Loading...
                     </div>
-                 ) : (indices.length > 0) ? (
+                 ) : (indices.length > 0 && indices[0].index !== config.index) ? (
+                     // If we have indices and the current one is just a fallback (likely matching one of them or not), show dropdown
                      <div className="relative">
                         <select 
                         value={config.index}
@@ -519,7 +551,7 @@ export default function App() {
                         className="w-full pl-10 pr-10 py-2.5 bg-gray-50 hover:bg-gray-100 border border-transparent focus:bg-white focus:border-blue-500/30 focus:ring-4 focus:ring-blue-500/10 rounded-xl appearance-none outline-none text-sm font-medium text-gray-700 truncate cursor-pointer transition-all duration-200"
                         >
                             {indices.map(idx => (
-                                <option key={idx.index} value={idx.index}>{idx.index} ({idx.docsCount})</option>
+                                <option key={idx.index} value={idx.index}>{idx.index} {idx.docsCount !== '?' ? `(${idx.docsCount})` : ''}</option>
                             ))}
                         </select>
                         <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
@@ -534,6 +566,7 @@ export default function App() {
                             onChange={(e) => handleIndexChange(e.target.value)}
                             className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500/30 focus:ring-4 focus:ring-blue-500/10 rounded-xl outline-none text-sm text-gray-700 placeholder-gray-400 transition-all duration-200"
                             placeholder="Enter Index Name"
+                            title="Serverless collections may require manual index entry"
                         />
                         {indicesError && (
                             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-400" title={indicesError}>
@@ -743,6 +776,20 @@ export default function App() {
                       </select>
                     </div>
                   </div>
+                  
+                  {/* Use My Location Button */}
+                  <div className="pb-0.5">
+                    <button
+                        onClick={handleUseMyLocation}
+                        disabled={locatingUser}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-100 text-blue-600 hover:bg-blue-200 rounded-lg text-xs font-semibold uppercase tracking-wide transition-colors disabled:opacity-50"
+                        title="Use Current Location"
+                    >
+                        {locatingUser ? <Loader2 size={14} className="animate-spin" /> : <Crosshair size={14} />}
+                        {locatingUser ? 'Locating...' : 'Use My Location'}
+                    </button>
+                  </div>
+
                   <div className="flex-1 text-right text-xs text-blue-400/80 pb-2 font-medium">
                     Filtering docs within <span className="text-blue-600 font-bold">{filters.geo.radius} {filters.geo.unit === 'mi' ? 'miles' : 'km'}</span> of [<span className="font-mono">{filters.geo.latitude}, {filters.geo.longitude}</span>]
                   </div>
