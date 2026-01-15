@@ -20,7 +20,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   
-  // Track if discovery was triggered automatically to suppress some UI errors if needed
+  // Track if discovery was triggered automatically
   const isAutoDiscovery = useRef(false);
 
   // Load profiles on mount
@@ -61,7 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
   const handleDiscover = async (isAuto = false) => {
     setIsDiscovering(true);
-    if (!isAuto) setDiscoveryError(null); // Clear error on manual click immediately
+    if (!isAuto) setDiscoveryError(null); 
     
     try {
         const payload = {
@@ -89,11 +89,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
         const found = data.collections || [];
         setCollections(found);
         
-        // Only show "No collections found" error on manual trigger or if we really expected something
         if (found.length === 0 && !isAuto) {
             setDiscoveryError('No OpenSearch Serverless collections found in this region.');
         } else if (found.length > 0) {
-            setDiscoveryError(null); // Success clears error
+            setDiscoveryError(null);
         }
     } catch (e: any) {
         if (!isAuto) {
@@ -109,7 +108,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   useEffect(() => {
     if (formData.useDemoMode) return;
 
-    // Determine if we have enough info to try discovery
     const hasProfile = formData.authType === 'profile' && formData.profile && formData.profile !== '';
     const hasManual = formData.authType === 'manual' && formData.accessKey && formData.secretKey && formData.secretKey.length > 10;
     
@@ -117,7 +115,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
         const timer = setTimeout(() => {
             isAutoDiscovery.current = true;
             handleDiscover(true);
-        }, 800); // 800ms debounce
+        }, 800); 
         return () => clearTimeout(timer);
     }
   }, [
@@ -196,64 +194,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                     </label>
                     </div>
 
-                    {/* Serverless Discovery UI */}
-                    {!formData.useDemoMode && (
-                        <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100 transition-all">
-                            <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-2">
-                                    <div className="p-1.5 bg-blue-100 text-blue-600 rounded-lg">
-                                    <Cloud size={16} />
-                                    </div>
-                                    <div>
-                                    <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wide">Serverless Collections</h3>
-                                    </div>
-                                </div>
-                                <button 
-                                    type="button"
-                                    onClick={() => handleDiscover(false)}
-                                    disabled={isDiscovering}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 shadow-sm text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors"
-                                >
-                                    {isDiscovering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                    {collections.length > 0 ? 'Refresh List' : (isDiscovering ? 'Scanning...' : 'Scan AWS')}
-                                </button>
-                            </div>
-
-                            {discoveryError && (
-                                <div className="mb-3 p-2 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2 text-xs text-red-600">
-                                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                                    <span>{discoveryError}</span>
-                                </div>
-                            )}
-
-                            {collections.length > 0 ? (
-                                <div className="relative animate-in fade-in zoom-in-95 duration-200">
-                                    <select
-                                        onChange={(e) => {
-                                            if (e.target.value) setNodesInput(e.target.value);
-                                        }}
-                                        className="w-full appearance-none bg-white border border-blue-200 text-slate-700 text-sm rounded-lg px-3 py-2.5 pr-8 outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm"
-                                        defaultValue=""
-                                    >
-                                        <option value="" disabled>Select a collection to connect...</option>
-                                        {collections.map(c => (
-                                            <option key={c.id} value={c.endpoint}>{c.name} ({c.id})</option>
-                                        ))}
-                                    </select>
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-blue-400">
-                                        <ChevronRight size={14} className="rotate-90" />
-                                    </div>
-                                </div>
-                            ) : (
-                                !isDiscovering && !discoveryError && (
-                                    <p className="text-[11px] text-blue-400/80 leading-relaxed">
-                                        Ensure your credentials in the <strong>Authentication</strong> tab have permissions to list collections (<code>aoss:ListCollections</code>).
-                                    </p>
-                                )
-                            )}
-                        </div>
-                    )}
-
                     {/* Nodes Input */}
                     <div className={`space-y-2 transition-opacity duration-200 ${formData.useDemoMode ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
                     <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Cluster Endpoint</label>
@@ -266,7 +206,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                             onChange={(e) => setNodesInput(e.target.value)}
                         />
                     </div>
-                    <p className="text-[11px] text-slate-400">Enter the full endpoint URL including protocol (https://).</p>
+                    <p className="text-[11px] text-slate-400">Enter the full endpoint URL including protocol (https://). Multiple nodes can be separated by newlines.</p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -379,6 +319,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                             />
                         </div>
                     </div>
+                    )}
+                    
+                    {/* Serverless Discovery UI - Moved here */}
+                    {!formData.useDemoMode && (
+                        <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100 transition-all">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 bg-blue-100 text-blue-600 rounded-lg">
+                                    <Cloud size={16} />
+                                    </div>
+                                    <div>
+                                    <h3 className="text-xs font-bold text-blue-900 uppercase tracking-wide">Serverless Collections</h3>
+                                    </div>
+                                </div>
+                                <button 
+                                    type="button"
+                                    onClick={() => handleDiscover(false)}
+                                    disabled={isDiscovering}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 shadow-sm text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors"
+                                >
+                                    {isDiscovering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                    {collections.length > 0 ? 'Refresh List' : (isDiscovering ? 'Scanning...' : 'Scan AWS')}
+                                </button>
+                            </div>
+
+                            {discoveryError && (
+                                <div className="mb-3 p-2 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2 text-xs text-red-600">
+                                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                                    <span>{discoveryError}</span>
+                                </div>
+                            )}
+
+                            {collections.length > 0 ? (
+                                <div className="relative animate-in fade-in zoom-in-95 duration-200">
+                                    <select
+                                        onChange={(e) => {
+                                            if (e.target.value) setNodesInput(e.target.value);
+                                        }}
+                                        className="w-full appearance-none bg-white border border-blue-200 text-slate-700 text-sm rounded-lg px-3 py-2.5 pr-8 outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm"
+                                        value={collections.find(c => nodesInput.includes(c.endpoint))?.endpoint || ""}
+                                    >
+                                        <option value="" disabled>Select a collection to connect...</option>
+                                        {collections.map(c => (
+                                            <option key={c.id} value={c.endpoint}>{c.name} ({c.id})</option>
+                                        ))}
+                                    </select>
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-blue-400">
+                                        <ChevronRight size={14} className="rotate-90" />
+                                    </div>
+                                </div>
+                            ) : (
+                                !isDiscovering && !discoveryError && (
+                                    <p className="text-[11px] text-blue-400/80 leading-relaxed">
+                                        Ensure your credentials above have permissions to list collections (<code>aoss:ListCollections</code>).
+                                    </p>
+                                )
+                            )}
+                        </div>
                     )}
                 </div>
                 )}
