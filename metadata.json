@@ -1,0 +1,5 @@
+{
+  "name": "OpenSearch Navigator",
+  "description": "A powerful React client for AWS OpenSearch Serverless featuring dynamic geo-spatial filtering, real-time query construction, and an interactive JSON document inspector.",
+  "requestFramePermissions": []
+}
