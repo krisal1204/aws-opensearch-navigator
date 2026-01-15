@@ -54,7 +54,12 @@ const getAwsCredentialsFile = async () => {
 
 const app = new Elysia()
   .use(cors())
-  // Serve static assets from 'dist' folder (created by Vite build)
+  // Serve specific assets folder
+  .use(staticPlugin({
+    assets: 'dist/assets',
+    prefix: '/assets'
+  }))
+  // Serve root files (index.html, favicon, etc)
   .use(staticPlugin({
     assets: 'dist',
     prefix: '/'
@@ -168,7 +173,9 @@ const app = new Elysia()
     }
   })
   // Fallback for SPA routing: serve index.html for any unknown non-API routes
-  .get('*', () => Bun.file('dist/index.html'))
+  .get('*', () => {
+    return Bun.file('dist/index.html');
+  })
   .listen(3000);
 
 console.log(`OpenSearch Navigator running at ${app.server?.hostname}:${app.server?.port}`);
