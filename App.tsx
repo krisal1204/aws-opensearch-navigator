@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Filter as FilterIcon,
   X,
-  Loader2
+  Loader2,
+  GripVertical
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -61,6 +62,7 @@ const INITIAL_FILTERS: SearchFilters = {
 };
 
 const STORAGE_KEY = 'opensearch_navigator_config_v1';
+const COL_SETTINGS_PREFIX = 'os_nav_cols_';
 
 const loadConfig = (): OpenSearchConfig => {
   try {
@@ -84,10 +86,7 @@ const getNestedValue = (obj: any, path: string): any => {
     if (current === null || current === undefined) return null;
 
     if (Array.isArray(current)) {
-      // Map the property extraction over the array
-      // Flatten the result if necessary, but simple map is usually enough for display logic which will JSON stringify arrays
       current = current.map((item: any) => item ? item[prop] : null).filter((val: any) => val !== null && val !== undefined);
-      // If we end up with an empty array, return null so it renders as empty/dash
       if (Array.isArray(current) && current.length === 0) return null;
     } else {
       current = current[prop];
@@ -114,11 +113,23 @@ export default function App() {
 
   // Table Column State
   const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [columnsInitialized, setColumnsInitialized] = useState(false);
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
   const [columnSearch, setColumnSearch] = useState('');
   const columnSelectorRef = useRef<HTMLDivElement>(null);
   
+  // Refs for State (needed for event handlers to access latest state)
+  const columnWidthsRef = useRef(columnWidths);
+  const visibleColumnsRef = useRef(visibleColumns);
+  
+  useEffect(() => { columnWidthsRef.current = columnWidths; }, [columnWidths]);
+  useEffect(() => { visibleColumnsRef.current = visibleColumns; }, [visibleColumns]);
+
+  // Drag Refs
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+
   // Infinite Scroll Ref
   const loadMoreObserver = useRef<IntersectionObserver | null>(null);
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
@@ -145,6 +156,41 @@ export default function App() {
     setFilters(prev => ({ ...prev, from: 0 })); // Reset pagination on config change
   };
 
+  // Helper to save column state
+  const saveColumnState = (cols: string[], widths: Record<string, number>) => {
+      try {
+          const key = `${COL_SETTINGS_PREFIX}${config.index}`;
+          localStorage.setItem(key, JSON.stringify({ columns: cols, widths }));
+      } catch (e) {
+          console.warn("Failed to save column settings");
+      }
+  };
+
+  // Load Columns from LocalStorage on Index Change
+  useEffect(() => {
+      const key = `${COL_SETTINGS_PREFIX}${config.index}`;
+      const savedSettings = localStorage.getItem(key);
+      
+      if (savedSettings) {
+          try {
+              const parsed = JSON.parse(savedSettings);
+              if (parsed.columns && Array.isArray(parsed.columns)) {
+                  setVisibleColumns(parsed.columns);
+                  setColumnWidths(parsed.widths || {});
+                  setColumnsInitialized(true);
+                  return;
+              }
+          } catch (e) {
+              console.error("Error parsing saved columns", e);
+          }
+      }
+      // If no saved settings, reset to uninitialized so auto-detect logic runs
+      setColumnsInitialized(false);
+      setVisibleColumns(['_id', '_score']);
+      setColumnWidths({});
+  }, [config.index]);
+
+
   // Fetch available indices
   useEffect(() => {
     const loadIndices = async () => {
@@ -167,14 +213,12 @@ export default function App() {
     loadIndices();
   }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl, config.authType, config.profile, config.region]);
 
-  // Auto-select valid index when indices change (e.g. collection switch)
+  // Auto-select valid index when indices change
   useEffect(() => {
     if (indices.length > 0) {
       const isCurrentValid = indices.some(idx => idx.index === config.index);
       if (!isCurrentValid) {
-        // Automatically select the first available index
         const firstIndex = indices[0].index;
-        // Avoid infinite loops by only updating if different
         if (config.index !== firstIndex) {
             handleSaveConfig({ ...config, index: firstIndex });
         }
@@ -196,7 +240,6 @@ export default function App() {
   }, [config.index, config.nodes, config.accessKey, config.useDemoMode, config.authType, config.profile, config.region]);
 
   const fetchData = useCallback(async () => {
-    // CRITICAL: Don't fire search if we are in a bad state
     if (!config.useDemoMode && (indicesError || loadingIndices)) {
         return; 
     }
@@ -207,10 +250,7 @@ export default function App() {
       const response = await OpenSearchService.search(config, filters);
       
       setData(prevData => {
-         // If we are resetting to page 0, replace data
          if (filters.from === 0) return response;
-         
-         // If we are loading more, append hits
          if (prevData) {
              return {
                  ...response,
@@ -230,22 +270,28 @@ export default function App() {
     }
   }, [config, filters, indicesError, loadingIndices]);
 
-  // Initialize columns based on the first document
+  // Initialize columns based on the first document if NOT already initialized from storage
   useEffect(() => {
     if (!columnsInitialized && data && data.hits.hits.length > 0) {
         const firstDoc = data.hits.hits[0];
         if (firstDoc && firstDoc._source) {
             const keys = Object.keys(firstDoc._source);
-            // Limit to first 8 keys to prevent massive tables by default
             const initialCols = ['_id', '_score', ...keys.slice(0, 8)];
+            
+            const initialWidths: Record<string, number> = {};
+            initialCols.forEach(col => {
+                initialWidths[col] = col === '_id' ? 150 : 200;
+            });
+            
             setVisibleColumns(initialCols);
+            setColumnWidths(initialWidths);
             setColumnsInitialized(true);
+            saveColumnState(initialCols, initialWidths);
         }
     }
-  }, [data, columnsInitialized]);
+  }, [data, columnsInitialized, config.index]);
 
-  // Debounced fetch for query/filter changes
-  // Note: We check if 'from' is 0 to determine if it's a new filter query or just pagination
+  // Debounced fetch
   useEffect(() => {
     const timer = setTimeout(() => {
         fetchData();
@@ -258,7 +304,6 @@ export default function App() {
     const observer = new IntersectionObserver(
         (entries) => {
             if (entries[0].isIntersecting && !loading && data) {
-                // Check if we have more data to load
                 if (data.hits.hits.length < data.hits.total.value) {
                     setFilters(prev => ({ ...prev, from: prev.from + prev.size }));
                 }
@@ -280,14 +325,14 @@ export default function App() {
     setFilters(prev => ({
       ...prev,
       geo: { ...prev.geo, enabled: !prev.geo.enabled },
-      from: 0 // Reset pagination
+      from: 0 
     }));
   };
 
   const addFieldFilter = (filter: FieldFilter) => {
     setFilters(prev => ({
       ...prev,
-      from: 0, // Reset pagination
+      from: 0,
       fieldFilters: [...prev.fieldFilters, filter]
     }));
   };
@@ -295,24 +340,98 @@ export default function App() {
   const removeFieldFilter = (id: string) => {
     setFilters(prev => ({
       ...prev,
-      from: 0, // Reset pagination
+      from: 0,
       fieldFilters: prev.fieldFilters.filter(f => f.id !== id)
     }));
   };
 
   const handleIndexChange = (newIndex: string) => {
       handleSaveConfig({ ...config, index: newIndex });
-      setColumnsInitialized(false); // Reset initialization so we pick up schema from new index
   };
 
   const toggleColumn = (col: string) => {
-      setVisibleColumns(prev => 
-          prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
-      );
+      const newCols = visibleColumns.includes(col) 
+          ? visibleColumns.filter(c => c !== col) 
+          : [...visibleColumns, col];
+      
+      setVisibleColumns(newCols);
+      
+      // Initialize width if new
+      if (!columnWidths[col]) {
+          const newWidths = { ...columnWidths, [col]: 200 };
+          setColumnWidths(newWidths);
+          saveColumnState(newCols, newWidths);
+      } else {
+          saveColumnState(newCols, columnWidths);
+      }
+  };
+
+  // --- Column Drag & Drop Logic ---
+  const handleDragStart = (e: React.DragEvent<HTMLTableHeaderCellElement>, index: number) => {
+      dragItem.current = index;
+      e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLTableHeaderCellElement>, index: number) => {
+     dragOverItem.current = index;
+  };
+
+  const handleDragEnd = () => {
+      const dragIndex = dragItem.current;
+      const dropIndex = dragOverItem.current;
+
+      if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
+          const newCols = [...visibleColumns];
+          const draggedCol = newCols[dragIndex];
+          newCols.splice(dragIndex, 1);
+          newCols.splice(dropIndex, 0, draggedCol);
+          setVisibleColumns(newCols);
+          saveColumnState(newCols, columnWidths);
+      }
+      
+      dragItem.current = null;
+      dragOverItem.current = null;
+  };
+
+  // --- Column Resize Logic ---
+  const startResize = (e: React.MouseEvent, col: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const startXCoord = e.pageX;
+      const startWidthVal = columnWidths[col] || 200;
+      let currentWidth = startWidthVal;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+          const diff = moveEvent.pageX - startXCoord;
+          currentWidth = Math.max(50, startWidthVal + diff); // Min width 50px
+          
+          setColumnWidths(prev => ({
+              ...prev,
+              [col]: currentWidth
+          }));
+      };
+
+      const onMouseUp = () => {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          document.body.style.cursor = 'default';
+          
+          // Save the final width for persistence
+          const finalWidths = {
+              ...columnWidthsRef.current,
+              [col]: currentWidth
+          };
+          saveColumnState(visibleColumnsRef.current, finalWidths);
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = 'col-resize';
   };
 
   const renderCell = (hit: OpenSearchHit<DocumentSource>, col: string) => {
-      if (col === '_id') return <span className="font-mono text-gray-500 truncate block max-w-[150px]" title={hit._id}>{hit._id}</span>;
+      if (col === '_id') return <span className="font-mono text-gray-500 truncate block" title={hit._id}>{hit._id}</span>;
       if (col === '_score') return <span className="inline-block px-2 py-0.5 bg-gray-100 text-gray-600 rounded-md text-xs font-medium">{hit._score?.toFixed(2)}</span>;
       if (col === '_index') return hit._index;
 
@@ -320,22 +439,19 @@ export default function App() {
       
       if (val === null || val === undefined) return <span className="text-gray-300">-</span>;
       
-      // Handle Arrays specifically for cleaner display of primitives
       if (Array.isArray(val)) {
-         // If all items are primitives, join them
          if (val.every(v => typeof v !== 'object' || v === null)) {
-             return <span className="text-gray-700 text-sm truncate max-w-xs block" title={val.join(', ')}>{val.join(', ')}</span>;
+             return <span className="text-gray-700 text-sm truncate block" title={val.join(', ')}>{val.join(', ')}</span>;
          }
-         return <span className="text-xs font-mono text-gray-400">{JSON.stringify(val).slice(0, 30)}...</span>;
+         return <span className="text-xs font-mono text-gray-400 block truncate">{JSON.stringify(val)}</span>;
       }
 
-      if (typeof val === 'object') return <span className="text-xs font-mono text-gray-400">{JSON.stringify(val).slice(0, 30)}...</span>;
-      return <span className="text-gray-700 text-sm">{String(val)}</span>;
+      if (typeof val === 'object') return <span className="text-xs font-mono text-gray-400 block truncate">{JSON.stringify(val)}</span>;
+      return <span className="text-gray-700 text-sm block truncate" title={String(val)}>{String(val)}</span>;
   };
   
   const filteredFields = availableFields.filter(f => f.path.toLowerCase().includes(columnSearch.toLowerCase()));
 
-  // Calculate total loaded vs total available
   const totalLoaded = data?.hits.hits.length || 0;
   const totalAvailable = data?.hits.total.value || 0;
 
@@ -466,13 +582,20 @@ export default function App() {
                                     <span className="font-semibold text-xs text-gray-400 uppercase tracking-wider">Visible Columns</span>
                                     <div className="flex gap-2">
                                         <button 
-                                            onClick={() => setVisibleColumns(['_id', '_score', ...availableFields.map(f => f.path)])}
+                                            onClick={() => {
+                                                const allCols = ['_id', '_score', ...availableFields.map(f => f.path)];
+                                                setVisibleColumns(allCols);
+                                                saveColumnState(allCols, columnWidths);
+                                            }}
                                             className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors px-2 py-1 hover:bg-blue-50 rounded"
                                         >
                                             All
                                         </button>
                                         <button 
-                                            onClick={() => setVisibleColumns([])}
+                                            onClick={() => {
+                                                setVisibleColumns([]);
+                                                saveColumnState([], columnWidths);
+                                            }}
                                             className="text-xs text-gray-400 hover:text-gray-600 font-medium transition-colors px-2 py-1 hover:bg-gray-50 rounded"
                                         >
                                             None
@@ -572,6 +695,7 @@ export default function App() {
             {filters.geo.enabled && (
               <div className="bg-blue-50/50 border-t border-blue-100 px-6 py-4 animate-in slide-in-from-top-2 fade-in duration-200">
                 <div className="max-w-[1600px] mx-auto flex flex-wrap items-end gap-6">
+                  {/* Geo inputs retained */}
                   <div className="w-64">
                     <label className="block text-[10px] font-bold text-blue-400 mb-1.5 uppercase tracking-wider">Geo Point Field</label>
                     <input 
@@ -649,7 +773,7 @@ export default function App() {
               </div>
 
               {/* Table / List */}
-              <div className="flex-1 overflow-auto bg-white">
+              <div className="flex-1 overflow-auto bg-white relative">
                 {loading && !data && totalLoaded === 0 ? (
                   <div className="flex flex-col items-center justify-center h-64 text-gray-400 gap-3">
                     <div className="relative">
@@ -678,26 +802,49 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-max min-w-full text-left border-collapse table-fixed">
                       <thead className="bg-gray-50/95 backdrop-blur text-gray-500 text-[11px] uppercase tracking-wider font-bold sticky top-0 z-10 border-b border-gray-100 shadow-sm">
                         <tr>
-                          {visibleColumns.map(col => (
-                            <th key={col} className="px-6 py-4 truncate max-w-[200px]" title={col}>
-                              {col.replace(/_/g, '')}
+                          {visibleColumns.map((col, index) => (
+                            <th 
+                                key={col} 
+                                className="relative px-3 py-4 group select-none hover:bg-gray-100/50 transition-colors"
+                                style={{ width: columnWidths[col] || 200 }}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, index)}
+                                onDragEnter={(e) => handleDragEnter(e, index)}
+                                onDragEnd={handleDragEnd}
+                                onDragOver={(e) => e.preventDefault()}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500">
+                                    <GripVertical size={14} />
+                                </span>
+                                <span className="truncate" title={col}>{col.replace(/_/g, '')}</span>
+                              </div>
+                              
+                              {/* Resize Handle */}
+                              <div 
+                                className="absolute right-[-12px] top-0 bottom-0 w-6 cursor-col-resize z-50 flex justify-center group-hover:opacity-100 hover:opacity-100"
+                                onMouseDown={(e) => startResize(e, col)}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                  <div className="w-[1px] h-full bg-blue-300 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                              </div>
                             </th>
                           ))}
-                          <th className="px-6 py-4 text-right w-24">Action</th>
+                          <th className="px-6 py-4 text-right w-24 sticky right-0 bg-gray-50/95 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
                         {data?.hits.hits.map((hit) => (
                           <tr key={hit._id} className="hover:bg-blue-50/30 transition-colors group">
                             {visibleColumns.map(col => (
-                              <td key={`${hit._id}-${col}`} className="px-6 py-4">
+                              <td key={`${hit._id}-${col}`} className="px-3 py-4 overflow-hidden border-r border-transparent hover:border-gray-100" style={{ width: columnWidths[col] || 200 }}>
                                 {renderCell(hit, col)}
                               </td>
                             ))}
-                            <td className="px-6 py-4 text-right">
+                            <td className="px-6 py-4 text-right sticky right-0 bg-white group-hover:bg-blue-50/30 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
                               <button 
                                 onClick={() => setSelectedDoc(hit)}
                                 className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100"

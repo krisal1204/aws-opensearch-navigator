@@ -41,13 +41,17 @@ export class OpenSearchService {
 
       switch (f.operator) {
         case 'eq':
-          filter.push({ term: { [f.field]: val } });
+          // Using match_phrase for 'equals' allows it to work on text fields (phrase match) 
+          // as well as keyword/numeric fields, avoiding the common "term query on text field" issue.
+          must.push({ match_phrase: { [f.field]: val } });
           break;
         case 'neq':
-          mustNot.push({ term: { [f.field]: val } });
+          mustNot.push({ match_phrase: { [f.field]: val } });
           break;
         case 'contains':
-          must.push({ match: { [f.field]: val } });
+          // Wildcard is expensive but typically expected for "contains"
+          // Alternatively using match_phrase_prefix or just match
+          must.push({ query_string: { default_field: f.field, query: `*${val}*` } });
           break;
         case 'gt':
         case 'gte':
@@ -72,7 +76,8 @@ export class OpenSearchService {
         }
       },
       sort: [
-        { "_score": { "order": "desc" } }
+        { "_score": { "order": "desc" } },
+        { "_doc": { "order": "desc" } } // Secondary sort for stability
       ]
     };
   }
@@ -197,7 +202,7 @@ export class OpenSearchService {
 
   static async search(config: OpenSearchConfig, filters: SearchFilters): Promise<OpenSearchResponse<DocumentSource>> {
     if (config.useDemoMode) {
-      return generateMockResponse(filters.from, filters.size, filters.query);
+      return generateMockResponse(filters.from, filters.size, filters.query, filters.fieldFilters);
     }
 
     const dsl = this.buildDsl(filters, config);
