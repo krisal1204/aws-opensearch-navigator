@@ -226,7 +226,7 @@ export default function App() {
         }
       }
     }
-  }, [indices, config.index]);
+  }, [indices]);
 
   // Fetch Mapping
   useEffect(() => {
@@ -542,8 +542,7 @@ export default function App() {
                     <div className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-sm text-gray-500 italic border border-transparent">
                         Loading...
                     </div>
-                 ) : (indices.length > 0 && indices[0].index !== config.index) ? (
-                     // If we have indices and the current one is just a fallback (likely matching one of them or not), show dropdown
+                 ) : (indices.length > 0) ? (
                      <div className="relative">
                         <select 
                         value={config.index}
@@ -564,12 +563,12 @@ export default function App() {
                             type="text" 
                             value={config.index}
                             onChange={(e) => handleIndexChange(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-transparent focus:bg-white focus:border-blue-500/30 focus:ring-4 focus:ring-blue-500/10 rounded-xl outline-none text-sm text-gray-700 placeholder-gray-400 transition-all duration-200"
+                            className={`w-full pl-10 pr-4 py-2.5 bg-gray-50 border ${indicesError ? 'border-red-300 bg-red-50 text-red-700' : 'border-transparent'} focus:bg-white focus:border-blue-500/30 focus:ring-4 focus:ring-blue-500/10 rounded-xl outline-none text-sm text-gray-700 placeholder-gray-400 transition-all duration-200`}
                             placeholder="Enter Index Name"
-                            title="Serverless collections may require manual index entry"
+                            title={indicesError || "Enter index name manually"}
                         />
                         {indicesError && (
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-400" title={indicesError}>
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-400 group-hover:text-red-500 cursor-help" title={indicesError}>
                                 <AlertCircle size={16} />
                             </div>
                         )}

@@ -177,17 +177,8 @@ export class OpenSearchService {
       }
       return [];
     } catch (error: any) {
-      console.warn("Could not list indices (likely Serverless environment). Defaulting to configured index.", error);
-      
-      // Fallback for Serverless: return the currently configured index as the only available index
-      // This allows the app to proceed to search without blocking on the index list error.
-      return [{
-        index: config.index,
-        health: 'unknown',
-        status: 'open',
-        docsCount: '?',
-        storeSize: '?'
-      }];
+      console.warn("Could not list indices (likely Serverless environment or permissions).", error);
+      throw error;
     }
   }
 
