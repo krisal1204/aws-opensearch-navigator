@@ -129,6 +129,21 @@ export default function App() {
     loadIndices();
   }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl, config.authType, config.profile, config.region]);
 
+  // Auto-select valid index when indices change (e.g. collection switch)
+  useEffect(() => {
+    if (indices.length > 0) {
+      const isCurrentValid = indices.some(idx => idx.index === config.index);
+      if (!isCurrentValid) {
+        // Automatically select the first available index
+        const firstIndex = indices[0].index;
+        // Avoid infinite loops by only updating if different
+        if (config.index !== firstIndex) {
+            handleSaveConfig({ ...config, index: firstIndex });
+        }
+      }
+    }
+  }, [indices, config.index]);
+
   // Fetch Mapping & Set Default Columns
   useEffect(() => {
     const fetchMapping = async () => {
