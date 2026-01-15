@@ -113,12 +113,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
         if (result.collections && result.collections.length > 0) {
             setDiscoveredCollections(result.collections);
-            // Auto-select first if none selected
+            // If we don't have a selection yet, or if the current input isn't in the new list, pick the first
+            // Note: We don't want to aggressively overwrite if the user typed something custom, unless it's empty
             if (!nodesInput || !nodesInput.trim()) {
                 setNodesInput(result.collections[0].endpoint);
             }
         } else {
             setDiscoveryError("No Serverless Collections found.");
+            setDiscoveredCollections([]);
         }
     } catch (e: any) {
         console.error("Discovery failed", e);
@@ -127,6 +129,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
         setDiscovering(false);
     }
   };
+
+  // Auto-discover when profile or region changes
+  useEffect(() => {
+     if (isOpen && formData.authType === 'profile' && formData.profile) {
+         // Debounce slightly to handle rapid changes or initial load
+         const timer = setTimeout(() => {
+             handleDiscoverClusters();
+         }, 100);
+         return () => clearTimeout(timer);
+     }
+  }, [formData.authType, formData.profile, formData.region, isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -297,7 +310,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                        </select>
                    ) : (
                        <div className="text-sm text-slate-500 italic border border-dashed border-slate-300 rounded-lg p-3 text-center">
-                          Click Discover to find your OpenSearch collections
+                          {discovering ? 'Discovering collections...' : 'Select a profile to auto-discover collections'}
                        </div>
                    )}
                </div>

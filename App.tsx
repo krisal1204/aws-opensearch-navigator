@@ -117,6 +117,9 @@ export default function App() {
   // Fetch available indices
   useEffect(() => {
     const loadIndices = async () => {
+       // Clear indices to indicate loading and ensure UI updates
+       setIndices([]);
+       
        if (config.nodes.length > 0 || config.useDemoMode) {
          try {
            const list = await OpenSearchService.getIndices(config);
@@ -287,7 +290,7 @@ export default function App() {
         <main className="flex-1 flex flex-col overflow-hidden relative">
           
           {/* Filter Bar */}
-          <div className="bg-white border-b border-slate-200 shadow-sm z-10 flex flex-col">
+          <div className="bg-white border-b border-slate-200 shadow-sm z-20 flex flex-col">
             {/* Top Row: Index Select, Search & Toggles */}
             <div className="p-4 flex flex-col md:flex-row gap-4 max-w-7xl mx-auto w-full">
               
