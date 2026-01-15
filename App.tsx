@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -8,7 +8,9 @@ import {
   Database,
   Eye,
   RefreshCw,
-  List
+  List,
+  Columns,
+  Check
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -35,7 +37,6 @@ const INITIAL_CONFIG: OpenSearchConfig = {
   profile: 'default',
   index: 'logs-v1',
   useDemoMode: true,
-  // Default to full URL for server
   proxyUrl: 'http://localhost:3000/api/proxy'
 };
 
@@ -68,6 +69,12 @@ const loadConfig = (): OpenSearchConfig => {
   return INITIAL_CONFIG;
 };
 
+// Helper to safely access nested properties
+const getNestedValue = (obj: any, path: string) => {
+  if (!obj) return null;
+  return path.split('.').reduce((prev, curr) => prev ? prev[curr] : null, obj);
+};
+
 export default function App() {
   const [config, setConfig] = useState<OpenSearchConfig>(loadConfig);
   const [filters, setFilters] = useState<SearchFilters>(INITIAL_FILTERS);
@@ -81,6 +88,22 @@ export default function App() {
   const [availableFields, setAvailableFields] = useState<FieldDefinition[]>([]);
   const [indices, setIndices] = useState<IndexInfo[]>([]);
 
+  // Table Column State
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
+  const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
+  const columnSelectorRef = useRef<HTMLDivElement>(null);
+
+  // Close column selector when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (columnSelectorRef.current && !columnSelectorRef.current.contains(event.target as Node)) {
+        setIsColumnSelectorOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleSaveConfig = (newConfig: OpenSearchConfig) => {
     setConfig(newConfig);
     try {
@@ -91,7 +114,7 @@ export default function App() {
     setData(null);
   };
 
-  // Fetch available indices when config nodes/creds change
+  // Fetch available indices
   useEffect(() => {
     const loadIndices = async () => {
        if (config.nodes.length > 0 || config.useDemoMode) {
@@ -106,12 +129,25 @@ export default function App() {
     loadIndices();
   }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl, config.authType, config.profile, config.region]);
 
-  // Fetch Mapping when config index changes
+  // Fetch Mapping & Set Default Columns
   useEffect(() => {
     const fetchMapping = async () => {
       try {
         const fields = await OpenSearchService.getMapping(config);
         setAvailableFields(fields);
+        
+        // Smart default columns
+        const defaults = ['_id', '_score'];
+        const candidates = ['name', 'title', 'message', 'status', 'level', 'timestamp', '@timestamp'];
+        const found = fields.filter(f => candidates.includes(f.path)).map(f => f.path);
+        
+        // If we found some good candidates, use them. 
+        // We only override defaults if the current visible columns are just the basic ID/Score
+        setVisibleColumns(prev => {
+             const isBasic = prev.length === 2 && prev.includes('_id') && prev.includes('_score');
+             return isBasic && found.length > 0 ? [...defaults, ...found.slice(0, 4)] : prev;
+        });
+
       } catch (err) {
         console.warn("Could not fetch mapping", err);
       }
@@ -136,7 +172,7 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => {
         fetchData();
-    }, 400); // Simple debounce
+    }, 400); 
     return () => clearTimeout(timer);
   }, [fetchData]);
 
@@ -174,6 +210,24 @@ export default function App() {
 
   const handleIndexChange = (newIndex: string) => {
       handleSaveConfig({ ...config, index: newIndex });
+  };
+
+  const toggleColumn = (col: string) => {
+      setVisibleColumns(prev => 
+          prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
+      );
+  };
+
+  const renderCell = (hit: OpenSearchHit<DocumentSource>, col: string) => {
+      if (col === '_id') return <span className="font-mono text-slate-600 truncate block max-w-[150px]" title={hit._id}>{hit._id}</span>;
+      if (col === '_score') return <span className="inline-block px-2 py-0.5 bg-slate-100 rounded text-xs">{hit._score?.toFixed(2)}</span>;
+      if (col === '_index') return hit._index;
+
+      const val = getNestedValue(hit._source, col);
+      
+      if (val === null || val === undefined) return <span className="text-slate-300">-</span>;
+      if (typeof val === 'object') return <span className="text-xs font-mono text-slate-400">{JSON.stringify(val).slice(0, 30)}...</span>;
+      return <span className="text-slate-800 text-sm">{String(val)}</span>;
   };
 
   return (
@@ -257,8 +311,63 @@ export default function App() {
                 />
               </div>
 
-              {/* Geo Filter Toggle */}
+              {/* Action Buttons */}
               <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+                 {/* Column Selector */}
+                 <div className="relative" ref={columnSelectorRef}>
+                    <button 
+                        onClick={() => setIsColumnSelectorOpen(!isColumnSelectorOpen)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
+                            isColumnSelectorOpen 
+                            ? 'bg-slate-100 text-slate-800 border-slate-300' 
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                        }`}
+                        title="Select Columns"
+                    >
+                        <Columns size={18} />
+                    </button>
+                    {isColumnSelectorOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-lg shadow-xl border border-slate-200 z-50 animate-in slide-in-from-top-2 duration-200 flex flex-col max-h-96">
+                            <div className="p-3 border-b border-slate-100 font-semibold text-xs text-slate-500 uppercase">
+                                Visible Columns
+                            </div>
+                            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                                <label className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={visibleColumns.includes('_id')} 
+                                        onChange={() => toggleColumn('_id')}
+                                        className="rounded text-accent focus:ring-accent"
+                                    />
+                                    <span className="text-sm text-slate-700">ID</span>
+                                </label>
+                                <label className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={visibleColumns.includes('_score')} 
+                                        onChange={() => toggleColumn('_score')}
+                                        className="rounded text-accent focus:ring-accent"
+                                    />
+                                    <span className="text-sm text-slate-700">Score</span>
+                                </label>
+                                {availableFields.map(field => (
+                                    <label key={field.path} className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={visibleColumns.includes(field.path)} 
+                                            onChange={() => toggleColumn(field.path)}
+                                            className="rounded text-accent focus:ring-accent"
+                                        />
+                                        <span className="text-sm text-slate-700 truncate" title={field.path}>
+                                            {field.path} <span className="text-xs text-slate-400">({field.type})</span>
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                 </div>
+
                 <button 
                   onClick={toggleGeoFilter}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
@@ -266,9 +375,10 @@ export default function App() {
                       ? 'bg-blue-50 text-accent border-blue-200' 
                       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                   }`}
+                  title="Toggle Geo Filter"
                 >
                   <MapPin size={18} />
-                  Geo Filter
+                  Geo
                 </button>
               </div>
             </div>
@@ -392,33 +502,28 @@ export default function App() {
                     <table className="w-full text-left border-collapse">
                       <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold sticky top-0">
                         <tr>
-                          <th className="px-6 py-3 border-b border-slate-200">ID</th>
-                          <th className="px-6 py-3 border-b border-slate-200">Name/Source</th>
-                          <th className="px-6 py-3 border-b border-slate-200">Score</th>
-                          <th className="px-6 py-3 border-b border-slate-200 text-right">Action</th>
+                          {visibleColumns.map(col => (
+                              <th key={col} className="px-6 py-3 border-b border-slate-200 truncate max-w-[150px]" title={col}>
+                                  {col.replace(/_/g, '').toUpperCase()}
+                              </th>
+                          ))}
+                          <th className="px-6 py-3 border-b border-slate-200 text-right w-24">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {data?.hits.hits.map((hit) => (
                           <tr key={hit._id} className="hover:bg-slate-50 transition-colors group">
-                            <td className="px-6 py-3 text-sm font-mono text-slate-600 truncate max-w-[150px]" title={hit._id}>
-                              {hit._id}
-                            </td>
-                            <td className="px-6 py-3 text-sm text-slate-800">
-                               <div className="font-medium">{hit._source.name || hit._source.title || 'Untitled Document'}</div>
-                               <div className="text-xs text-slate-500 truncate max-w-md">{hit._source.description || JSON.stringify(hit._source).substring(0, 60)}...</div>
-                            </td>
-                            <td className="px-6 py-3 text-sm text-slate-500">
-                              <span className="inline-block px-2 py-0.5 bg-slate-100 rounded text-xs">
-                                {hit._score?.toFixed(2)}
-                              </span>
-                            </td>
+                            {visibleColumns.map(col => (
+                                <td key={`${hit._id}-${col}`} className="px-6 py-3 border-b border-slate-50">
+                                    {renderCell(hit, col)}
+                                </td>
+                            ))}
                             <td className="px-6 py-3 text-right">
                                <button 
                                  onClick={() => setSelectedDoc(hit)}
-                                 className="text-accent hover:text-blue-700 font-medium text-sm flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                 className="text-accent hover:text-blue-700 font-medium text-sm flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-full"
                                >
-                                 <Eye size={16} /> View JSON
+                                 <Eye size={16} />
                                </button>
                             </td>
                           </tr>

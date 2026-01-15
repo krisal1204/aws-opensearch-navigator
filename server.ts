@@ -110,13 +110,16 @@ const app = new Elysia()
 
         const data = await response.json();
         
-        // Transform { collectionSummaries: [...] } to a simple list of endpoints
-        const endpoints = (data.collectionSummaries || []).map((c: any) => {
-             // AOSS Endpoint format: https://{id}.{region}.aoss.amazonaws.com
-             return `https://${c.id}.${awsRegion}.aoss.amazonaws.com`;
+        // Transform { collectionSummaries: [...] } to a simple list of objects with names
+        const collections = (data.collectionSummaries || []).map((c: any) => {
+             return {
+                 name: c.name,
+                 id: c.id,
+                 endpoint: `https://${c.id}.${awsRegion}.aoss.amazonaws.com`
+             };
         });
 
-        return { endpoints };
+        return { collections };
 
     } catch (err: any) {
         console.error("Discovery Error:", err);

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Key, Globe, Database, Network, Users, Lock, RefreshCw, ChevronDown } from 'lucide-react';
+import { X, Server, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { OpenSearchConfig } from '../types';
-import { OpenSearchService } from '../services/opensearchService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -16,14 +15,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   const [profiles, setProfiles] = useState<string[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   
+  // UI State
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   // Discovery States
   const [discovering, setDiscovering] = useState(false);
-  const [discoveredClusters, setDiscoveredClusters] = useState<string[]>([]);
+  const [discoveredCollections, setDiscoveredCollections] = useState<{name: string, endpoint: string, id: string}[]>([]);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-
-  // Index Fetching
-  const [fetchingIndices, setFetchingIndices] = useState(false);
-  const [discoveredIndices, setDiscoveredIndices] = useState<string[]>([]);
 
   // Sync internal state if config prop updates
   useEffect(() => {
@@ -113,14 +111,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
             throw new Error(result.error || result.message || 'Failed to discover clusters');
         }
 
-        if (result.endpoints && result.endpoints.length > 0) {
-            setDiscoveredClusters(result.endpoints);
+        if (result.collections && result.collections.length > 0) {
+            setDiscoveredCollections(result.collections);
             // Auto-select first if none selected
-            if (!nodesInput) {
-                setNodesInput(result.endpoints[0]);
+            if (!nodesInput || !nodesInput.trim()) {
+                setNodesInput(result.collections[0].endpoint);
             }
         } else {
-            setDiscoveryError("No Serverless Collections found in this region.");
+            setDiscoveryError("No Serverless Collections found.");
         }
     } catch (e: any) {
         console.error("Discovery failed", e);
@@ -128,32 +126,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     } finally {
         setDiscovering(false);
     }
-  };
-
-  // 2. Fetch Indices from the configured Node
-  const handleFetchIndices = async () => {
-      setFetchingIndices(true);
-      try {
-          // Construct a temporary config to use the service
-          const tempConfig: OpenSearchConfig = {
-              ...formData,
-              nodes: nodesInput.split('\n').filter(Boolean)
-          };
-          
-          if (tempConfig.nodes.length === 0) return;
-
-          const indices = await OpenSearchService.getIndices(tempConfig);
-          const names = indices.map(i => i.index);
-          setDiscoveredIndices(names);
-          
-          if (names.length > 0 && !names.includes(formData.index)) {
-             setFormData(prev => ({...prev, index: names[0]}));
-          }
-      } catch (e) {
-          console.error("Index fetch failed", e);
-      } finally {
-          setFetchingIndices(false);
-      }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -174,278 +146,209 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        
+        {/* Header */}
         <div className="flex justify-between items-center p-5 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Server className="w-5 h-5 text-accent" />
-            Connection Settings
+            Connect
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
-            <X size={24} />
-          </button>
+          <div className="flex items-center gap-4">
+             <div className="flex items-center">
+                <input
+                    type="checkbox"
+                    id="useDemoMode"
+                    name="useDemoMode"
+                    checked={formData.useDemoMode}
+                    onChange={handleChange}
+                    className="w-4 h-4 text-accent rounded border-gray-300 focus:ring-accent"
+                />
+                <label htmlFor="useDemoMode" className="ml-2 text-sm text-slate-600 font-medium cursor-pointer">
+                    Demo Mode
+                </label>
+             </div>
+             <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={24} />
+             </button>
+          </div>
         </div>
         
-        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4">
-          
-          <div className="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm border border-blue-100 mb-4">
-            <strong>Note:</strong> Connect to your OpenSearch Proxy (backend) for secure access, or use Demo Mode.
-          </div>
-
-          <div className="flex items-center mb-6">
-            <input
-              type="checkbox"
-              id="useDemoMode"
-              name="useDemoMode"
-              checked={formData.useDemoMode}
-              onChange={handleChange}
-              className="w-5 h-5 text-accent rounded border-gray-300 focus:ring-accent"
-            />
-            <label htmlFor="useDemoMode" className="ml-2 text-slate-700 font-medium cursor-pointer">
-              Use Demo Mode (Mock Data)
-            </label>
-          </div>
-
-          <div className={`space-y-4 transition-opacity ${formData.useDemoMode ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1">
+          <div className={`space-y-6 transition-opacity ${formData.useDemoMode ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
             
-            {/* Proxy & Region */}
-             <div className="grid grid-cols-2 gap-4">
-                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                        <Network size={16} /> Proxy URL
-                    </label>
-                    <input
-                        type="text"
-                        name="proxyUrl"
-                        value={formData.proxyUrl || ''}
-                        onChange={handleChange}
-                        placeholder="http://localhost:3000/api/proxy"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                    />
-                </div>
-                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                        <Globe size={16} /> Region
-                    </label>
-                    <input
-                        type="text"
-                        name="region"
-                        value={formData.region}
-                        onChange={handleChange}
-                        placeholder="us-east-1"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                    />
-                </div>
-            </div>
-
-            {/* Auth Section */}
-             <div className="relative pt-2 pb-2">
-              <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                <div className="w-full border-t border-gray-200"></div>
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-white px-2 text-sm text-gray-500 font-medium">Authentication</span>
-              </div>
-            </div>
-
-            <div className="flex p-1 bg-slate-100 rounded-lg mb-4">
-              <button
-                type="button"
-                onClick={() => handleAuthTypeChange('profile')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${
-                  formData.authType === 'profile' 
-                    ? 'bg-white text-accent shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <Users size={16} /> AWS Profile
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAuthTypeChange('manual')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${
-                  formData.authType === 'manual' 
-                    ? 'bg-white text-accent shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <Key size={16} /> Access Keys
-              </button>
-            </div>
-
-            {formData.authType === 'profile' ? (
-                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                   <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                     <Users size={16} /> Select Profile
-                   </label>
-                   <select
-                     name="profile"
-                     value={formData.profile || ''}
-                     onChange={handleChange}
-                     disabled={loadingProfiles || profiles.length === 0}
-                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                   >
-                     <option value="">-- Select a Profile --</option>
-                     {profiles.map(p => (
-                       <option key={p} value={p}>{p}</option>
-                     ))}
-                   </select>
-                   {profiles.length === 0 && !loadingProfiles && (
-                     <p className="text-xs text-orange-400 mt-1">No profiles found. Check ~/.aws/credentials on the server.</p>
-                   )}
-                </div>
-            ) : (
-                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                          <Lock size={16} /> Access Key
-                          </label>
-                          <input
-                          type="password"
-                          name="accessKey"
-                          value={formData.accessKey}
-                          onChange={handleChange}
-                          placeholder="AKIA..."
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                          <Lock size={16} /> Secret Key
-                          </label>
-                          <input
-                          type="password"
-                          name="secretKey"
-                          value={formData.secretKey}
-                          onChange={handleChange}
-                          placeholder="wJalrX..."
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                          />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                          <Key size={16} /> Session Token (Optional)
-                      </label>
-                      <textarea
-                          name="sessionToken"
-                          value={formData.sessionToken || ''}
-                          onChange={handleChange}
-                          placeholder="IQoJb3JpZ2luX2Vj..."
-                          rows={2}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs"
-                      />
-                    </div>
-                </div>
-            )}
-
-            {/* Cluster & Index Selection */}
-            <div className="relative pt-2 pb-2">
-              <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                <div className="w-full border-t border-gray-200"></div>
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-white px-2 text-sm text-gray-500 font-medium">Target</span>
-              </div>
-            </div>
-
-            {/* Cluster Nodes with Discovery */}
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                 <label className="block text-sm font-medium text-slate-700 flex items-center gap-2">
-                   <Globe size={16} /> Cluster Nodes
-                 </label>
-                 <button 
-                   type="button"
-                   onClick={handleDiscoverClusters}
-                   disabled={discovering}
-                   className="text-xs text-accent hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
-                 >
-                    <RefreshCw size={12} className={discovering ? 'animate-spin' : ''} />
-                    {discovering ? 'Discovering...' : 'Discover Collections'}
-                 </button>
-              </div>
-              
-              {discoveryError && (
-                 <div className="text-xs text-red-500 mb-2">{discoveryError}</div>
-              )}
-
-              {/* Toggle between Textarea and Select if discovery worked */}
-              {discoveredClusters.length > 0 ? (
-                 <div className="relative">
-                    <select
-                        value={nodesInput}
-                        onChange={(e) => setNodesInput(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+            {/* Step 1: Auth */}
+            <div className="space-y-3">
+               <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                 <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs">1</span>
+                 Authentication
+               </h3>
+               
+               <div className="ml-7">
+                   <div className="flex p-1 bg-slate-100 rounded-lg mb-3 w-full">
+                    <button
+                        type="button"
+                        onClick={() => handleAuthTypeChange('profile')}
+                        className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-sm font-medium rounded-md transition-all ${
+                        formData.authType === 'profile' 
+                            ? 'bg-white text-accent shadow-sm' 
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
                     >
-                        {discoveredClusters.map(url => (
-                            <option key={url} value={url}>{url}</option>
-                        ))}
-                        <option value={nodesInput}>Manual Entry...</option>
-                    </select>
-                    {nodesInput === discoveredClusters[0] && (
-                        <button 
-                          type="button"
-                          onClick={() => setDiscoveredClusters([])}
-                          className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-red-500"
-                        >
-                            Reset
-                        </button>
-                    )}
-                 </div>
-              ) : (
-                <textarea
-                    name="nodes"
-                    value={nodesInput}
-                    onChange={(e) => setNodesInput(e.target.value)}
-                    placeholder="https://<id>.us-east-1.aoss.amazonaws.com"
-                    rows={2}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-sm"
-                />
-              )}
-            </div>
+                        AWS Profile
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleAuthTypeChange('manual')}
+                        className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-sm font-medium rounded-md transition-all ${
+                        formData.authType === 'manual' 
+                            ? 'bg-white text-accent shadow-sm' 
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        Access Keys
+                    </button>
+                    </div>
 
-            {/* Initial Index with Fetch */}
-            <div>
-                <div className="flex justify-between items-center mb-1">
-                    <label className="block text-sm font-medium text-slate-700 flex items-center gap-2">
-                        <Database size={16} /> Initial Index
-                    </label>
-                    {nodesInput.trim().length > 0 && (
-                        <button 
-                            type="button"
-                            onClick={handleFetchIndices}
-                            disabled={fetchingIndices}
-                            className="text-xs text-accent hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
-                        >
-                            <RefreshCw size={12} className={fetchingIndices ? 'animate-spin' : ''} />
-                            Fetch Indices
-                        </button>
-                    )}
-                </div>
-                
-                {discoveredIndices.length > 0 ? (
-                     <div className="relative">
+                    {formData.authType === 'profile' ? (
+                        <div>
                         <select
-                            name="index"
-                            value={formData.index}
+                            name="profile"
+                            value={formData.profile || ''}
                             onChange={handleChange}
+                            disabled={loadingProfiles || profiles.length === 0}
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
                         >
-                             {discoveredIndices.map(idx => (
-                                <option key={idx} value={idx}>{idx}</option>
-                             ))}
-                             <option value={formData.index}>Manual Entry...</option>
+                            <option value="">-- Select AWS Profile --</option>
+                            {profiles.map(p => (
+                            <option key={p} value={p}>{p}</option>
+                            ))}
                         </select>
-                     </div>
-                ) : (
-                    <input
-                        type="text"
-                        name="index"
-                        value={formData.index}
-                        onChange={handleChange}
-                        placeholder="logs-v1"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-                    />
+                        {profiles.length === 0 && !loadingProfiles && (
+                            <p className="text-xs text-orange-400 mt-1">No profiles found in ~/.aws/credentials</p>
+                        )}
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            <input
+                                type="password"
+                                name="accessKey"
+                                value={formData.accessKey}
+                                onChange={handleChange}
+                                placeholder="Access Key ID"
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                            />
+                            <input
+                                type="password"
+                                name="secretKey"
+                                value={formData.secretKey}
+                                onChange={handleChange}
+                                placeholder="Secret Access Key"
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                            />
+                            <input
+                                type="password"
+                                name="sessionToken"
+                                value={formData.sessionToken || ''}
+                                onChange={handleChange}
+                                placeholder="Session Token (Optional)"
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                            />
+                        </div>
+                    )}
+               </div>
+            </div>
+
+            <div className="w-full border-t border-slate-100"></div>
+
+            {/* Step 2: Collection */}
+            <div className="space-y-3">
+               <div className="flex justify-between items-center">
+                    <h3 className="text-sm font-semibold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs">2</span>
+                        Collection
+                    </h3>
+                    <button 
+                       type="button"
+                       onClick={handleDiscoverClusters}
+                       disabled={discovering}
+                       className="text-xs text-accent hover:text-blue-700 flex items-center gap-1 disabled:opacity-50 font-medium"
+                    >
+                       <RefreshCw size={12} className={discovering ? 'animate-spin' : ''} />
+                       Discover
+                    </button>
+               </div>
+               
+               <div className="ml-7">
+                   {discoveryError && (
+                      <div className="text-xs text-red-500 mb-2">{discoveryError}</div>
+                   )}
+                   
+                   {discoveredCollections.length > 0 ? (
+                       <select
+                           value={nodesInput}
+                           onChange={(e) => setNodesInput(e.target.value)}
+                           className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                       >
+                           <option value="" disabled>Select Collection</option>
+                           {discoveredCollections.map(c => (
+                               <option key={c.id} value={c.endpoint}>{c.name} ({c.id})</option>
+                           ))}
+                           <option value={nodesInput}>Custom URL...</option>
+                       </select>
+                   ) : (
+                       <div className="text-sm text-slate-500 italic border border-dashed border-slate-300 rounded-lg p-3 text-center">
+                          Click Discover to find your OpenSearch collections
+                       </div>
+                   )}
+               </div>
+            </div>
+
+            {/* Advanced Settings Toggle */}
+            <div className="pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-800 font-medium w-full"
+                >
+                   {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                   Advanced Settings
+                </button>
+                
+                {showAdvanced && (
+                   <div className="mt-3 ml-2 pl-4 border-l-2 border-slate-100 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                        <div>
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Region</label>
+                            <input
+                                type="text"
+                                name="region"
+                                value={formData.region}
+                                onChange={handleChange}
+                                placeholder="us-east-1"
+                                className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:border-accent outline-none"
+                            />
+                        </div>
+                         <div>
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Proxy URL</label>
+                            <input
+                                type="text"
+                                name="proxyUrl"
+                                value={formData.proxyUrl || ''}
+                                onChange={handleChange}
+                                placeholder="http://localhost:3000/api/proxy"
+                                className="w-full px-2 py-1.5 border border-slate-200 rounded text-sm focus:border-accent outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-slate-500 mb-1">Manual Node URL</label>
+                            <textarea
+                                name="nodes"
+                                value={nodesInput}
+                                onChange={(e) => setNodesInput(e.target.value)}
+                                rows={2}
+                                className="w-full px-2 py-1.5 border border-slate-200 rounded text-xs font-mono focus:border-accent outline-none"
+                            />
+                        </div>
+                   </div>
                 )}
             </div>
 
@@ -456,15 +359,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
           <button 
             type="button" 
             onClick={onClose}
-            className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors"
+            className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors text-sm"
           >
             Cancel
           </button>
           <button 
             onClick={handleSubmit}
-            className="px-6 py-2 bg-accent hover:bg-blue-600 text-white rounded-lg font-medium shadow-sm transition-colors"
+            className="px-6 py-2 bg-accent hover:bg-blue-600 text-white rounded-lg font-medium shadow-sm transition-colors text-sm"
           >
-            Save Configuration
+            Connect & Save
           </button>
         </div>
       </div>
