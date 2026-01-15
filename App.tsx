@@ -14,7 +14,8 @@ import {
   Check,
   AlertCircle,
   Filter as FilterIcon,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -113,9 +114,14 @@ export default function App() {
 
   // Table Column State
   const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
+  const [columnsInitialized, setColumnsInitialized] = useState(false);
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
   const [columnSearch, setColumnSearch] = useState('');
   const columnSelectorRef = useRef<HTMLDivElement>(null);
+  
+  // Infinite Scroll Ref
+  const loadMoreObserver = useRef<IntersectionObserver | null>(null);
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
 
   // Close column selector when clicking outside
   useEffect(() => {
@@ -136,6 +142,7 @@ export default function App() {
       console.error("Failed to save config to local storage", e);
     }
     setData(null);
+    setFilters(prev => ({ ...prev, from: 0 })); // Reset pagination on config change
   };
 
   // Fetch available indices
@@ -175,25 +182,12 @@ export default function App() {
     }
   }, [indices, config.index]);
 
-  // Fetch Mapping & Set Default Columns
+  // Fetch Mapping
   useEffect(() => {
     const fetchMapping = async () => {
       try {
         const fields = await OpenSearchService.getMapping(config);
         setAvailableFields(fields);
-        
-        // Smart default columns
-        const defaults = ['_id', '_score'];
-        const candidates = ['name', 'title', 'message', 'status', 'level', 'timestamp', '@timestamp'];
-        const found = fields.filter(f => candidates.includes(f.path)).map(f => f.path);
-        
-        // If we found some good candidates, use them. 
-        // We only override defaults if the current visible columns are just the basic ID/Score
-        setVisibleColumns(prev => {
-             const isBasic = prev.length === 2 && prev.includes('_id') && prev.includes('_score');
-             return isBasic && found.length > 0 ? [...defaults, ...found.slice(0, 4)] : prev;
-        });
-
       } catch (err) {
         console.warn("Could not fetch mapping", err);
       }
@@ -203,9 +197,6 @@ export default function App() {
 
   const fetchData = useCallback(async () => {
     // CRITICAL: Don't fire search if we are in a bad state
-    // We only search if:
-    // 1. We are in Demo Mode OR
-    // 2. We are in Live Mode AND there are no index loading errors AND indices are not currently loading
     if (!config.useDemoMode && (indicesError || loadingIndices)) {
         return; 
     }
@@ -214,7 +205,24 @@ export default function App() {
     setError(null);
     try {
       const response = await OpenSearchService.search(config, filters);
-      setData(response);
+      
+      setData(prevData => {
+         // If we are resetting to page 0, replace data
+         if (filters.from === 0) return response;
+         
+         // If we are loading more, append hits
+         if (prevData) {
+             return {
+                 ...response,
+                 hits: {
+                     ...response.hits,
+                     hits: [...prevData.hits.hits, ...response.hits.hits]
+                 }
+             };
+         }
+         return response;
+      });
+
     } catch (err: any) {
       setError(err.message || 'Failed to fetch data');
     } finally {
@@ -222,7 +230,22 @@ export default function App() {
     }
   }, [config, filters, indicesError, loadingIndices]);
 
-  // Debounced fetch for query changes
+  // Initialize columns based on the first document
+  useEffect(() => {
+    if (!columnsInitialized && data && data.hits.hits.length > 0) {
+        const firstDoc = data.hits.hits[0];
+        if (firstDoc && firstDoc._source) {
+            const keys = Object.keys(firstDoc._source);
+            // Limit to first 8 keys to prevent massive tables by default
+            const initialCols = ['_id', '_score', ...keys.slice(0, 8)];
+            setVisibleColumns(initialCols);
+            setColumnsInitialized(true);
+        }
+    }
+  }, [data, columnsInitialized]);
+
+  // Debounced fetch for query/filter changes
+  // Note: We check if 'from' is 0 to determine if it's a new filter query or just pagination
   useEffect(() => {
     const timer = setTimeout(() => {
         fetchData();
@@ -230,26 +253,41 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [fetchData]);
 
-  const handlePageChange = (direction: 'next' | 'prev') => {
-    setFilters(prev => {
-      const newFrom = direction === 'next' 
-        ? prev.from + prev.size 
-        : Math.max(0, prev.from - prev.size);
-      return { ...prev, from: newFrom };
-    });
-  };
+  // Infinite Scroll Observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+        (entries) => {
+            if (entries[0].isIntersecting && !loading && data) {
+                // Check if we have more data to load
+                if (data.hits.hits.length < data.hits.total.value) {
+                    setFilters(prev => ({ ...prev, from: prev.from + prev.size }));
+                }
+            }
+        },
+        { threshold: 0.1, rootMargin: '200px' }
+    );
+
+    loadMoreObserver.current = observer;
+    
+    if (loadMoreTriggerRef.current) {
+        observer.observe(loadMoreTriggerRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [loading, data]);
 
   const toggleGeoFilter = () => {
     setFilters(prev => ({
       ...prev,
-      geo: { ...prev.geo, enabled: !prev.geo.enabled }
+      geo: { ...prev.geo, enabled: !prev.geo.enabled },
+      from: 0 // Reset pagination
     }));
   };
 
   const addFieldFilter = (filter: FieldFilter) => {
     setFilters(prev => ({
       ...prev,
-      from: 0,
+      from: 0, // Reset pagination
       fieldFilters: [...prev.fieldFilters, filter]
     }));
   };
@@ -257,13 +295,14 @@ export default function App() {
   const removeFieldFilter = (id: string) => {
     setFilters(prev => ({
       ...prev,
-      from: 0,
+      from: 0, // Reset pagination
       fieldFilters: prev.fieldFilters.filter(f => f.id !== id)
     }));
   };
 
   const handleIndexChange = (newIndex: string) => {
       handleSaveConfig({ ...config, index: newIndex });
+      setColumnsInitialized(false); // Reset initialization so we pick up schema from new index
   };
 
   const toggleColumn = (col: string) => {
@@ -296,6 +335,10 @@ export default function App() {
   
   const filteredFields = availableFields.filter(f => f.path.toLowerCase().includes(columnSearch.toLowerCase()));
 
+  // Calculate total loaded vs total available
+  const totalLoaded = data?.hits.hits.length || 0;
+  const totalAvailable = data?.hits.total.value || 0;
+
   return (
     <div className="min-h-screen bg-[#F9FAFB] flex flex-col h-screen overflow-hidden font-sans text-gray-900">
       {/* Top Navigation Bar */}
@@ -316,11 +359,11 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => fetchData()}
+              onClick={() => { setFilters(prev => ({ ...prev, from: 0 })); fetchData(); }}
               className="p-2.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200"
               title="Refresh Data"
             >
-              <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+              <RefreshCw size={20} className={loading && totalLoaded === 0 ? 'animate-spin' : ''} />
             </button>
             <button 
               onClick={() => setIsSettingsOpen(true)}
@@ -338,7 +381,7 @@ export default function App() {
         <main className="flex-1 flex flex-col overflow-hidden relative">
           
           {/* Filter Bar */}
-          <div className="bg-white z-20 flex flex-col shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)]">
+          <div className="bg-white z-40 flex flex-col shadow-[0_4px_20px_-4px_rgba(0,0,0,0.05)]">
             {/* Top Row: Index Select, Search & Toggles */}
             <div className="p-4 flex flex-col lg:flex-row gap-4 max-w-[1600px] mx-auto w-full items-center">
               
@@ -417,7 +460,7 @@ export default function App() {
                         <span className="hidden xl:inline">Columns</span>
                     </button>
                     {isColumnSelectorOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 ring-1 ring-black/5 z-50 animate-in slide-in-from-top-2 duration-200 flex flex-col max-h-[500px]">
+                        <div className="absolute right-0 top-full mt-2 w-[600px] bg-white rounded-2xl shadow-xl border border-gray-100 ring-1 ring-black/5 z-50 animate-in slide-in-from-top-2 duration-200 flex flex-col max-h-[500px]">
                             <div className="p-3 border-b border-gray-50">
                                 <div className="flex items-center justify-between mb-2">
                                     <span className="font-semibold text-xs text-gray-400 uppercase tracking-wider">Visible Columns</span>
@@ -456,13 +499,13 @@ export default function App() {
                                     )}
                                 </div>
                             </div>
-                            <div className="overflow-y-auto flex-1 p-2 space-y-0.5 custom-scrollbar">
+                            <div className="overflow-y-auto flex-1 p-2 space-y-0.5 custom-scrollbar grid grid-cols-2 gap-x-2 content-start">
                                 <label className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
                                     <input 
                                         type="checkbox" 
                                         checked={visibleColumns.includes('_id')} 
                                         onChange={() => toggleColumn('_id')} 
-                                        className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4" 
+                                        className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4 shrink-0" 
                                     />
                                     <span className="text-sm text-gray-700 font-medium">ID</span>
                                 </label>
@@ -471,7 +514,7 @@ export default function App() {
                                         type="checkbox" 
                                         checked={visibleColumns.includes('_score')} 
                                         onChange={() => toggleColumn('_score')} 
-                                        className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4" 
+                                        className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4 shrink-0" 
                                     />
                                     <span className="text-sm text-gray-700 font-medium">Score</span>
                                 </label>
@@ -481,7 +524,7 @@ export default function App() {
                                             type="checkbox" 
                                             checked={visibleColumns.includes(field.path)} 
                                             onChange={() => toggleColumn(field.path)} 
-                                            className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4" 
+                                            className="rounded text-blue-600 focus:ring-blue-500 border-gray-300 w-4 h-4 shrink-0" 
                                         />
                                         <span className="text-sm text-gray-700 truncate font-medium" title={field.path}>
                                             {field.path} <span className="text-xs text-gray-400 font-normal ml-1">({field.type})</span>
@@ -489,7 +532,7 @@ export default function App() {
                                     </label>
                                 ))}
                                 {filteredFields.length === 0 && availableFields.length > 0 && (
-                                    <div className="px-3 py-4 text-center text-xs text-gray-400 italic">
+                                    <div className="col-span-2 px-3 py-4 text-center text-xs text-gray-400 italic">
                                         No fields match "{columnSearch}"
                                     </div>
                                 )}
@@ -588,42 +631,26 @@ export default function App() {
           <div className="flex-1 overflow-auto bg-[#F9FAFB] p-6">
             <div className="max-w-[1600px] mx-auto bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/50 overflow-hidden flex flex-col h-full ring-1 ring-black/5">
               {/* Results Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white sticky top-0 z-10">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white sticky top-0 z-20">
                 <div className="text-sm text-gray-500">
-                  {loading ? (
+                  {loading && totalLoaded === 0 ? (
                       <span className="flex items-center gap-2">
                           <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
                           Searching...
                       </span>
                   ) : (
-                    <>Found <span className="font-bold text-gray-900">{data?.hits.total.value.toLocaleString() ?? 0}</span> results</>
+                    <>Found <span className="font-bold text-gray-900">{totalAvailable.toLocaleString() ?? 0}</span> results</>
                   )}
                 </div>
                 
-                <div className="flex items-center gap-2">
-                  <button 
-                    disabled={filters.from === 0 || loading}
-                    onClick={() => handlePageChange('prev')}
-                    className="p-1.5 hover:bg-gray-100 text-gray-500 hover:text-gray-900 rounded-lg disabled:opacity-30 transition-colors"
-                  >
-                    <ChevronLeft size={20} />
-                  </button>
-                  <span className="text-sm font-medium text-gray-700 font-mono px-2">
-                     {filters.from + 1} - {Math.min((data?.hits.total.value || 0), filters.from + filters.size)}
-                  </span>
-                  <button 
-                    disabled={!data || (filters.from + filters.size >= data.hits.total.value) || loading}
-                    onClick={() => handlePageChange('next')}
-                    className="p-1.5 hover:bg-gray-100 text-gray-500 hover:text-gray-900 rounded-lg disabled:opacity-30 transition-colors"
-                  >
-                    <ChevronRight size={20} />
-                  </button>
+                <div className="text-xs font-medium text-gray-400">
+                    Showing {totalLoaded.toLocaleString()} of {totalAvailable.toLocaleString()}
                 </div>
               </div>
 
               {/* Table / List */}
               <div className="flex-1 overflow-auto bg-white">
-                {loading && !data ? (
+                {loading && !data && totalLoaded === 0 ? (
                   <div className="flex flex-col items-center justify-center h-64 text-gray-400 gap-3">
                     <div className="relative">
                         <div className="w-12 h-12 rounded-full border-4 border-gray-100 border-t-blue-500 animate-spin"></div>
@@ -650,48 +677,64 @@ export default function App() {
                     <p className="text-sm mt-1">{error}</p>
                   </div>
                 ) : (
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-gray-50/80 backdrop-blur text-gray-400 text-[11px] uppercase tracking-wider font-bold sticky top-0 z-10 border-b border-gray-100">
-                      <tr>
-                        {visibleColumns.map(col => (
-                          <th key={col} className="px-6 py-4 truncate max-w-[200px]" title={col}>
-                            {col.replace(/_/g, '')}
-                          </th>
-                        ))}
-                        <th className="px-6 py-4 text-right w-24">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {data?.hits.hits.map((hit) => (
-                        <tr key={hit._id} className="hover:bg-blue-50/30 transition-colors group">
+                  <>
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-gray-50/95 backdrop-blur text-gray-500 text-[11px] uppercase tracking-wider font-bold sticky top-0 z-10 border-b border-gray-100 shadow-sm">
+                        <tr>
                           {visibleColumns.map(col => (
-                            <td key={`${hit._id}-${col}`} className="px-6 py-4">
-                              {renderCell(hit, col)}
-                            </td>
+                            <th key={col} className="px-6 py-4 truncate max-w-[200px]" title={col}>
+                              {col.replace(/_/g, '')}
+                            </th>
                           ))}
-                          <td className="px-6 py-4 text-right">
-                             <button 
-                               onClick={() => setSelectedDoc(hit)}
-                               className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100"
-                               title="View Details"
-                             >
-                               <Eye size={18} />
-                             </button>
-                          </td>
+                          <th className="px-6 py-4 text-right w-24">Action</th>
                         </tr>
-                      ))}
-                      {data?.hits.hits.length === 0 && (
-                          <tr>
-                              <td colSpan={visibleColumns.length + 1} className="text-center py-20 text-gray-400">
-                                  <div className="flex flex-col items-center gap-2">
-                                    <Search size={32} className="text-gray-200" />
-                                    <p>No results found matching your criteria</p>
-                                  </div>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {data?.hits.hits.map((hit) => (
+                          <tr key={hit._id} className="hover:bg-blue-50/30 transition-colors group">
+                            {visibleColumns.map(col => (
+                              <td key={`${hit._id}-${col}`} className="px-6 py-4">
+                                {renderCell(hit, col)}
                               </td>
+                            ))}
+                            <td className="px-6 py-4 text-right">
+                              <button 
+                                onClick={() => setSelectedDoc(hit)}
+                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100"
+                                title="View Details"
+                              >
+                                <Eye size={18} />
+                              </button>
+                            </td>
                           </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        ))}
+                        {data?.hits.hits.length === 0 && (
+                            <tr>
+                                <td colSpan={visibleColumns.length + 1} className="text-center py-20 text-gray-400">
+                                    <div className="flex flex-col items-center gap-2">
+                                      <Search size={32} className="text-gray-200" />
+                                      <p>No results found matching your criteria</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    
+                    {/* Infinite Scroll Trigger & Loading State */}
+                    {totalLoaded < totalAvailable && (
+                        <div ref={loadMoreTriggerRef} className="py-8 flex justify-center w-full">
+                            {loading ? (
+                                <div className="flex items-center gap-2 text-sm text-gray-400 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-100">
+                                    <Loader2 className="animate-spin text-blue-500" size={16} />
+                                    <span>Loading more results...</span>
+                                </div>
+                            ) : (
+                                <div className="h-4 w-full"></div>
+                            )}
+                        </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
