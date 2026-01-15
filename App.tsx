@@ -31,11 +31,12 @@ const INITIAL_CONFIG: OpenSearchConfig = {
   accessKey: '',
   secretKey: '',
   sessionToken: '',
+  authType: 'profile', // Default to profile
+  profile: 'default',
   index: 'logs-v1',
-  geoField: 'location',
   useDemoMode: true,
-  // Default to relative path for production, but allow override
-  proxyUrl: '/api/proxy'
+  // Default to full URL for server
+  proxyUrl: 'http://localhost:3000/api/proxy'
 };
 
 const INITIAL_FILTERS: SearchFilters = {
@@ -45,7 +46,8 @@ const INITIAL_FILTERS: SearchFilters = {
     latitude: 34.0522, // Los Angeles default
     longitude: -118.2437,
     radius: 50,
-    unit: 'km'
+    unit: 'km',
+    geoField: 'location' // Default geo field
   },
   fieldFilters: [],
   from: 0,
@@ -102,7 +104,7 @@ export default function App() {
        }
     };
     loadIndices();
-  }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl]);
+  }, [config.nodes, config.accessKey, config.useDemoMode, config.proxyUrl, config.authType, config.profile, config.region]);
 
   // Fetch Mapping when config index changes
   useEffect(() => {
@@ -115,7 +117,7 @@ export default function App() {
       }
     };
     fetchMapping();
-  }, [config.index, config.nodes, config.accessKey, config.useDemoMode]);
+  }, [config.index, config.nodes, config.accessKey, config.useDemoMode, config.authType, config.profile, config.region]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -287,6 +289,16 @@ export default function App() {
             {filters.geo.enabled && (
                <div className="bg-blue-50/50 border-t border-blue-100 px-4 py-3 animate-in slide-in-from-top-2 fade-in duration-200">
                   <div className="max-w-7xl mx-auto flex items-end gap-4">
+                     <div className="w-48">
+                      <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Geo Point Field</label>
+                      <input 
+                        type="text" 
+                        value={filters.geo.geoField}
+                        onChange={(e) => setFilters(prev => ({ ...prev, geo: { ...prev.geo, geoField: e.target.value } }))}
+                        placeholder="location"
+                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded focus:border-accent focus:ring-1 focus:ring-accent outline-none font-mono"
+                      />
+                    </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Latitude</label>
                       <input 
@@ -325,8 +337,7 @@ export default function App() {
                        </div>
                     </div>
                     <div className="flex-1 text-right text-xs text-slate-400 pb-2">
-                       Filtering docs within {filters.geo.radius} {filters.geo.unit === 'mi' ? 'miles' : 'km'} of [{filters.geo.latitude}, {filters.geo.longitude}] 
-                       using field: <span className="font-mono text-accent bg-blue-50 px-1 rounded">{config.geoField}</span>
+                       Filtering docs within {filters.geo.radius} {filters.geo.unit === 'mi' ? 'miles' : 'km'} of [{filters.geo.latitude}, {filters.geo.longitude}]
                     </div>
                   </div>
                </div>

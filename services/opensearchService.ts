@@ -22,7 +22,8 @@ export class OpenSearchService {
 
     // Geo Filter
     if (filters.geo.enabled) {
-      const geoField = config.geoField || 'location';
+      // Use the geoField specified in the filter, defaulting to 'location' if somehow missing
+      const geoField = filters.geo.geoField || 'location';
       filter.push({
         geo_distance: {
           distance: `${filters.geo.radius}${filters.geo.unit}`,
@@ -114,17 +115,17 @@ export class OpenSearchService {
        region: config.region
      };
 
-     // If profile is selected, send profile name. Server will resolve credentials.
-     if (config.profile) {
+     // Handle Auth Type
+     if (config.authType === 'profile' && config.profile) {
        payload.profile = config.profile;
-     } else {
-       // Otherwise send manual credentials
+     } else if (config.authType === 'manual') {
        payload.credentials = {
          accessKey: config.accessKey,
          secretKey: config.secretKey,
          sessionToken: config.sessionToken
        };
      }
+     // If no authType matches or data is missing, backend will try unsigned fetch
 
      try {
        const res = await fetch(proxyUrl, {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Key, Globe, Database, Map, Network, Users } from 'lucide-react';
+import { X, Server, Key, Globe, Database, Network, Users, Lock, RefreshCw, ChevronDown } from 'lucide-react';
 import { OpenSearchConfig } from '../types';
+import { OpenSearchService } from '../services/opensearchService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -14,6 +15,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   const [nodesInput, setNodesInput] = useState(config.nodes.join('\n'));
   const [profiles, setProfiles] = useState<string[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
+  
+  // Discovery States
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredClusters, setDiscoveredClusters] = useState<string[]>([]);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+
+  // Index Fetching
+  const [fetchingIndices, setFetchingIndices] = useState(false);
+  const [discoveredIndices, setDiscoveredIndices] = useState<string[]>([]);
 
   // Sync internal state if config prop updates
   useEffect(() => {
@@ -27,9 +37,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
       const fetchProfiles = async () => {
         setLoadingProfiles(true);
         try {
-          // Assuming proxyUrl is running the backend
           const proxy = config.proxyUrl || 'http://localhost:3000/api/proxy';
-          const baseUrl = new URL(proxy).origin;
+          const baseUrl = new URL(proxy, window.location.origin).origin;
           
           const res = await fetch(`${baseUrl}/api/aws-profiles`);
           if (res.ok) {
@@ -50,7 +59,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
-    // Cast to access 'checked' only if it is an input element
     const checked = (e.target as HTMLInputElement).checked;
     
     setFormData(prev => ({
@@ -59,24 +67,98 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     }));
   };
 
-  const handleProfileChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const profile = e.target.value;
-    
-    // When a profile is selected, we clear manual credentials to indicate
-    // that the profile will be used for authentication.
+  const handleAuthTypeChange = (type: 'profile' | 'manual') => {
     setFormData(prev => ({
       ...prev,
-      profile,
-      accessKey: '',
-      secretKey: '',
-      sessionToken: ''
+      authType: type,
+      profile: type === 'manual' ? '' : prev.profile,
+      accessKey: type === 'profile' ? '' : prev.accessKey,
+      secretKey: type === 'profile' ? '' : prev.secretKey
     }));
+  };
+
+  // 1. Discover Clusters via AWS
+  const handleDiscoverClusters = async () => {
+    setDiscovering(true);
+    setDiscoveryError(null);
+    try {
+        const proxy = formData.proxyUrl || 'http://localhost:3000/api/proxy';
+        // Construct discovery endpoint
+        const baseUrl = proxy.replace(/\/proxy$/, '/aws-discovery');
+        
+        const payload: any = {
+            region: formData.region,
+            authType: formData.authType
+        };
+        
+        if (formData.authType === 'profile') {
+            payload.profile = formData.profile;
+        } else {
+            payload.credentials = {
+                accessKey: formData.accessKey,
+                secretKey: formData.secretKey,
+                sessionToken: formData.sessionToken
+            };
+        }
+
+        const res = await fetch(baseUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await res.json();
+        
+        if (!res.ok) {
+            throw new Error(result.error || result.message || 'Failed to discover clusters');
+        }
+
+        if (result.endpoints && result.endpoints.length > 0) {
+            setDiscoveredClusters(result.endpoints);
+            // Auto-select first if none selected
+            if (!nodesInput) {
+                setNodesInput(result.endpoints[0]);
+            }
+        } else {
+            setDiscoveryError("No Serverless Collections found in this region.");
+        }
+    } catch (e: any) {
+        console.error("Discovery failed", e);
+        setDiscoveryError(e.message || "Discovery failed");
+    } finally {
+        setDiscovering(false);
+    }
+  };
+
+  // 2. Fetch Indices from the configured Node
+  const handleFetchIndices = async () => {
+      setFetchingIndices(true);
+      try {
+          // Construct a temporary config to use the service
+          const tempConfig: OpenSearchConfig = {
+              ...formData,
+              nodes: nodesInput.split('\n').filter(Boolean)
+          };
+          
+          if (tempConfig.nodes.length === 0) return;
+
+          const indices = await OpenSearchService.getIndices(tempConfig);
+          const names = indices.map(i => i.index);
+          setDiscoveredIndices(names);
+          
+          if (names.length > 0 && !names.includes(formData.index)) {
+             setFormData(prev => ({...prev, index: names[0]}));
+          }
+      } catch (e) {
+          console.error("Index fetch failed", e);
+      } finally {
+          setFetchingIndices(false);
+      }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Parse nodes input
     const cleanNodes = nodesInput
       .split('\n')
       .map(s => s.trim())
@@ -124,146 +206,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
           <div className={`space-y-4 transition-opacity ${formData.useDemoMode ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
             
-             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                <Network size={16} /> Proxy URL
-              </label>
-              <input
-                type="text"
-                name="proxyUrl"
-                value={formData.proxyUrl || ''}
-                onChange={handleChange}
-                placeholder="http://localhost:3000/api/proxy"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
-              />
-              <p className="text-xs text-slate-400 mt-1">Local backend that handles AWS SigV4 signing</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                <Globe size={16} /> Cluster Nodes
-              </label>
-              <div className="text-xs text-slate-500 mb-2">Enter one URL per line</div>
-              <textarea
-                name="nodes"
-                value={nodesInput}
-                onChange={(e) => setNodesInput(e.target.value)}
-                placeholder="https://<id>.us-east-1.aoss.amazonaws.com"
-                rows={2}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-sm"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-                <div>
+            {/* Proxy & Region */}
+             <div className="grid grid-cols-2 gap-4">
+                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                        <Database size={16} /> Initial Index
+                        <Network size={16} /> Proxy URL
                     </label>
                     <input
                         type="text"
-                        name="index"
-                        value={formData.index}
+                        name="proxyUrl"
+                        value={formData.proxyUrl || ''}
                         onChange={handleChange}
-                        placeholder="logs-v1"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                        placeholder="http://localhost:3000/api/proxy"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
                     />
                 </div>
-                <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                        <Map size={16} /> GeoPoint Field
-                    </label>
-                    <input
-                        type="text"
-                        name="geoField"
-                        value={formData.geoField}
-                        onChange={handleChange}
-                        placeholder="location"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
-                    />
-                </div>
-            </div>
-
-             <div className="relative pt-2 pb-2">
-              <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                <div className="w-full border-t border-gray-200"></div>
-              </div>
-              <div className="relative flex justify-center">
-                <span className="bg-white px-2 text-sm text-gray-500">AWS Credentials</span>
-              </div>
-            </div>
-
-            {/* Profile Selection */}
-            <div>
-               <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                 <Users size={16} /> Load from Local Profile
-               </label>
-               <select
-                 name="profile"
-                 value={formData.profile || ''}
-                 onChange={handleProfileChange}
-                 disabled={loadingProfiles || profiles.length === 0}
-                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
-               >
-                 <option value="">-- Manual Entry --</option>
-                 {profiles.map(p => (
-                   <option key={p} value={p}>{p}</option>
-                 ))}
-               </select>
-               {profiles.length === 0 && !loadingProfiles && (
-                 <p className="text-xs text-orange-400 mt-1">No profiles found in ~/.aws/credentials</p>
-               )}
-            </div>
-
-            {/* Manual Key Entry - disabled/dimmed if profile is selected */}
-            <div className={`space-y-4 transition-all ${formData.profile ? 'opacity-50 grayscale' : 'opacity-100'}`}>
-                <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                    <Key size={16} /> Access Key
-                    </label>
-                    <input
-                    type="password"
-                    name="accessKey"
-                    value={formData.accessKey}
-                    onChange={handleChange}
-                    disabled={!!formData.profile}
-                    placeholder="AKIA..."
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent disabled:bg-slate-100"
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                    <Key size={16} /> Secret Key
-                    </label>
-                    <input
-                    type="password"
-                    name="secretKey"
-                    value={formData.secretKey}
-                    onChange={handleChange}
-                    disabled={!!formData.profile}
-                    placeholder="wJalrX..."
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent disabled:bg-slate-100"
-                    />
-                </div>
-                </div>
-
-                <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                    <Key size={16} /> Session Token (Optional)
-                </label>
-                <textarea
-                    name="sessionToken"
-                    value={formData.sessionToken || ''}
-                    onChange={handleChange}
-                    disabled={!!formData.profile}
-                    placeholder="IQoJb3JpZ2luX2Vj..."
-                    rows={2}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs disabled:bg-slate-100"
-                />
-                </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
                  <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                         <Globe size={16} /> Region
@@ -274,9 +231,222 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                         value={formData.region}
                         onChange={handleChange}
                         placeholder="us-east-1"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
                     />
                 </div>
+            </div>
+
+            {/* Auth Section */}
+             <div className="relative pt-2 pb-2">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-2 text-sm text-gray-500 font-medium">Authentication</span>
+              </div>
+            </div>
+
+            <div className="flex p-1 bg-slate-100 rounded-lg mb-4">
+              <button
+                type="button"
+                onClick={() => handleAuthTypeChange('profile')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${
+                  formData.authType === 'profile' 
+                    ? 'bg-white text-accent shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Users size={16} /> AWS Profile
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAuthTypeChange('manual')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${
+                  formData.authType === 'manual' 
+                    ? 'bg-white text-accent shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Key size={16} /> Access Keys
+              </button>
+            </div>
+
+            {formData.authType === 'profile' ? (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                   <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                     <Users size={16} /> Select Profile
+                   </label>
+                   <select
+                     name="profile"
+                     value={formData.profile || ''}
+                     onChange={handleChange}
+                     disabled={loadingProfiles || profiles.length === 0}
+                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                   >
+                     <option value="">-- Select a Profile --</option>
+                     {profiles.map(p => (
+                       <option key={p} value={p}>{p}</option>
+                     ))}
+                   </select>
+                   {profiles.length === 0 && !loadingProfiles && (
+                     <p className="text-xs text-orange-400 mt-1">No profiles found. Check ~/.aws/credentials on the server.</p>
+                   )}
+                </div>
+            ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                          <Lock size={16} /> Access Key
+                          </label>
+                          <input
+                          type="password"
+                          name="accessKey"
+                          value={formData.accessKey}
+                          onChange={handleChange}
+                          placeholder="AKIA..."
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                          <Lock size={16} /> Secret Key
+                          </label>
+                          <input
+                          type="password"
+                          name="secretKey"
+                          value={formData.secretKey}
+                          onChange={handleChange}
+                          placeholder="wJalrX..."
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                          />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                          <Key size={16} /> Session Token (Optional)
+                      </label>
+                      <textarea
+                          name="sessionToken"
+                          value={formData.sessionToken || ''}
+                          onChange={handleChange}
+                          placeholder="IQoJb3JpZ2luX2Vj..."
+                          rows={2}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs"
+                      />
+                    </div>
+                </div>
+            )}
+
+            {/* Cluster & Index Selection */}
+            <div className="relative pt-2 pb-2">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-2 text-sm text-gray-500 font-medium">Target</span>
+              </div>
+            </div>
+
+            {/* Cluster Nodes with Discovery */}
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                 <label className="block text-sm font-medium text-slate-700 flex items-center gap-2">
+                   <Globe size={16} /> Cluster Nodes
+                 </label>
+                 <button 
+                   type="button"
+                   onClick={handleDiscoverClusters}
+                   disabled={discovering}
+                   className="text-xs text-accent hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                 >
+                    <RefreshCw size={12} className={discovering ? 'animate-spin' : ''} />
+                    {discovering ? 'Discovering...' : 'Discover Collections'}
+                 </button>
+              </div>
+              
+              {discoveryError && (
+                 <div className="text-xs text-red-500 mb-2">{discoveryError}</div>
+              )}
+
+              {/* Toggle between Textarea and Select if discovery worked */}
+              {discoveredClusters.length > 0 ? (
+                 <div className="relative">
+                    <select
+                        value={nodesInput}
+                        onChange={(e) => setNodesInput(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                    >
+                        {discoveredClusters.map(url => (
+                            <option key={url} value={url}>{url}</option>
+                        ))}
+                        <option value={nodesInput}>Manual Entry...</option>
+                    </select>
+                    {nodesInput === discoveredClusters[0] && (
+                        <button 
+                          type="button"
+                          onClick={() => setDiscoveredClusters([])}
+                          className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-red-500"
+                        >
+                            Reset
+                        </button>
+                    )}
+                 </div>
+              ) : (
+                <textarea
+                    name="nodes"
+                    value={nodesInput}
+                    onChange={(e) => setNodesInput(e.target.value)}
+                    placeholder="https://<id>.us-east-1.aoss.amazonaws.com"
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-sm"
+                />
+              )}
+            </div>
+
+            {/* Initial Index with Fetch */}
+            <div>
+                <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium text-slate-700 flex items-center gap-2">
+                        <Database size={16} /> Initial Index
+                    </label>
+                    {nodesInput.trim().length > 0 && (
+                        <button 
+                            type="button"
+                            onClick={handleFetchIndices}
+                            disabled={fetchingIndices}
+                            className="text-xs text-accent hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
+                        >
+                            <RefreshCw size={12} className={fetchingIndices ? 'animate-spin' : ''} />
+                            Fetch Indices
+                        </button>
+                    )}
+                </div>
+                
+                {discoveredIndices.length > 0 ? (
+                     <div className="relative">
+                        <select
+                            name="index"
+                            value={formData.index}
+                            onChange={handleChange}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                        >
+                             {discoveredIndices.map(idx => (
+                                <option key={idx} value={idx}>{idx}</option>
+                             ))}
+                             <option value={formData.index}>Manual Entry...</option>
+                        </select>
+                     </div>
+                ) : (
+                    <input
+                        type="text"
+                        name="index"
+                        value={formData.index}
+                        onChange={handleChange}
+                        placeholder="logs-v1"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
+                    />
+                )}
             </div>
 
           </div>

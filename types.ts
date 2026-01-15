@@ -1,14 +1,14 @@
 export interface OpenSearchConfig {
   nodes: string[];
   region: string;
+  authType: 'profile' | 'manual';
   accessKey: string;
   secretKey: string;
-  sessionToken?: string; // AWS Session Token for temporary credentials
-  profile?: string; // Local AWS Profile name
+  sessionToken?: string;
+  profile?: string;
   index: string;
-  geoField: string; // The field name mapped as geo_point in OpenSearch
   useDemoMode: boolean;
-  proxyUrl?: string; // URL of the local proxy server
+  proxyUrl?: string;
 }
 
 export interface GeoFilterState {
@@ -17,6 +17,7 @@ export interface GeoFilterState {
   longitude: number;
   radius: number;
   unit: 'km' | 'mi';
+  geoField: string; // Moved here
 }
 
 export type FilterOperator = 'eq' | 'neq' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains' | 'exists';

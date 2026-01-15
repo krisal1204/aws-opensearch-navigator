@@ -1,103 +1,128 @@
 import { Elysia } from 'elysia';
 import { cors } from '@elysiajs/cors';
 import { staticPlugin } from '@elysiajs/static';
-import { AwsClient } from 'aws4fetch';
-import { homedir } from 'os';
-import { join } from 'path';
-import { readFile, access } from 'fs/promises';
-import { constants } from 'fs';
+import { loadSharedConfigFiles } from '@aws-sdk/shared-ini-file-loader';
+import { fromIni } from '@aws-sdk/credential-providers';
+import { SignatureV4 } from '@smithy/signature-v4';
+import { HttpRequest } from '@smithy/protocol-http';
+import { Sha256 } from '@aws-crypto/sha256-js';
 
 declare const Bun: any;
 
-// Requires: bun add elysia @elysiajs/cors @elysiajs/static aws4fetch
-
-// Helper to parse INI files (simple version for AWS creds)
-const parseIni = (content: string) => {
-  const result: Record<string, any> = {};
-  let currentSection = '';
-  
-  content.split('\n').forEach(line => {
-    line = line.trim();
-    if (!line || line.startsWith('#') || line.startsWith(';')) return;
-    
-    if (line.startsWith('[') && line.endsWith(']')) {
-      currentSection = line.slice(1, -1);
-      result[currentSection] = {};
-    } else if (currentSection) {
-      const [key, ...valParts] = line.split('=');
-      if (key && valParts.length) {
-        result[currentSection][key.trim()] = valParts.join('=').trim();
-      }
-    }
-  });
-  return result;
-};
-
-const getAwsCredentialsFile = async () => {
-  const home = homedir();
-  const paths = [
-    join(home, '.aws', 'credentials'),
-    join(home, '.aws', 'config') // Sometimes creds are here for SSO
-  ];
-
-  for (const p of paths) {
-    try {
-      await access(p, constants.R_OK);
-      const content = await readFile(p, 'utf-8');
-      return { path: p, content };
-    } catch {
-      continue;
-    }
-  }
-  return null;
-};
+// Requires: bun add elysia @elysiajs/cors @elysiajs/static @aws-sdk/credential-providers @aws-sdk/signature-v4 @aws-sdk/shared-ini-file-loader @smithy/protocol-http @smithy/signature-v4 @aws-crypto/sha256-js
 
 const app = new Elysia()
   .use(cors())
-  // Serve specific assets folder
   .use(staticPlugin({
     assets: 'dist/assets',
     prefix: '/assets'
   }))
-  // Serve root files (index.html, favicon, etc)
   .use(staticPlugin({
     assets: 'dist',
     prefix: '/'
   }))
   .get('/api/aws-profiles', async () => {
-    const fileData = await getAwsCredentialsFile();
-    if (!fileData) return { profiles: [] };
-    
-    const parsed = parseIni(fileData.content);
-    // Filter out sections that don't look like profiles or process 'profile name' syntax from config
-    const profiles = Object.keys(parsed).map(k => k.replace(/^profile\s+/, ''));
-    return { profiles: [...new Set(profiles)] }; // Dedupe
-  })
-  .get('/api/aws-creds/:profile', async ({ params, set }) => {
-    const profileName = params.profile;
-    const fileData = await getAwsCredentialsFile();
-    
-    if (!fileData) {
-        set.status = 404;
-        return 'Credentials file not found';
+    try {
+      const { configFile, credentialsFile } = await loadSharedConfigFiles();
+      const profiles = new Set([
+        ...Object.keys(configFile),
+        ...Object.keys(credentialsFile)
+      ]);
+      return { profiles: Array.from(profiles) };
+    } catch (error) {
+      console.error("Error loading profiles:", error);
+      return { profiles: [] };
     }
+  })
+  .post('/api/aws-discovery', async ({ body, set }: any) => {
+    // Endpoint to list OpenSearch Serverless Collections for a region
+    // Avoids adding full SDK client by using SigV4 + Fetch against the API directly
     
-    const parsed = parseIni(fileData.content);
-    
-    // Check for exact match or 'profile name' match (common in ~/.aws/config)
-    let section = parsed[profileName] || parsed[`profile ${profileName}`];
-    
-    if (!section) {
-       set.status = 404;
-       return 'Profile not found';
+    const { region, credentials, profile } = body;
+    const awsRegion = region || 'us-east-1';
+
+    let signerCredentials;
+    try {
+      if (profile) {
+        const provider = fromIni({ profile });
+        signerCredentials = await provider();
+      } else if (credentials && credentials.accessKey) {
+        signerCredentials = {
+          accessKeyId: credentials.accessKey,
+          secretAccessKey: credentials.secretKey,
+          sessionToken: credentials.sessionToken
+        };
+      }
+    } catch (e: any) {
+       set.status = 403;
+       return { error: "Credential Error", details: e.message };
     }
 
-    return {
-      accessKeyId: section.aws_access_key_id,
-      secretAccessKey: section.aws_secret_access_key,
-      sessionToken: section.aws_session_token,
-      region: section.region
-    };
+    if (!signerCredentials) {
+        set.status = 401;
+        return { error: "No credentials provided" };
+    }
+
+    try {
+        // OpenSearch Serverless ListCollections API
+        const endpoint = `https://aoss.${awsRegion}.amazonaws.com/`;
+        const urlObj = new URL(endpoint);
+
+        const signer = new SignatureV4({
+          credentials: signerCredentials,
+          region: awsRegion,
+          service: 'aoss',
+          sha256: Sha256
+        });
+
+        // Construct request
+        const httpRequest = new HttpRequest({
+          method: 'POST',
+          protocol: 'https:',
+          hostname: urlObj.hostname,
+          path: '/',
+          headers: {
+            'host': urlObj.host,
+            'content-type': 'application/x-amz-json-1.0',
+            'x-amz-target': 'OpenSearchServerless.ListCollections'
+          },
+          body: JSON.stringify({}) // Empty body lists all
+        });
+
+        const signedRequest = await signer.sign(httpRequest);
+        
+        // Convert headers
+        const fetchHeaders: Record<string, string> = {};
+        for (const [key, value] of Object.entries(signedRequest.headers)) {
+          fetchHeaders[key] = value as string;
+        }
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: fetchHeaders,
+          body: signedRequest.body
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`AWS API Error (${response.status}): ${text}`);
+        }
+
+        const data = await response.json();
+        
+        // Transform { collectionSummaries: [...] } to a simple list of endpoints
+        const endpoints = (data.collectionSummaries || []).map((c: any) => {
+             // AOSS Endpoint format: https://{id}.{region}.aoss.amazonaws.com
+             return `https://${c.id}.${awsRegion}.aoss.amazonaws.com`;
+        });
+
+        return { endpoints };
+
+    } catch (err: any) {
+        console.error("Discovery Error:", err);
+        set.status = 500;
+        return { error: err.message };
+    }
   })
   .post('/api/proxy', async ({ body, set }: any) => {
     // Expects body: { url, method, data, region, credentials: { ... }, profile: "default" }
@@ -108,42 +133,95 @@ const app = new Elysia()
       return "Missing url";
     }
 
-    let awsCreds;
+    // Determine service name based on URL
+    // OpenSearch Serverless: *.aoss.amazonaws.com -> 'aoss'
+    // Managed OpenSearch: *.es.amazonaws.com -> 'es'
+    const service = url.includes('aoss.amazonaws.com') ? 'aoss' : 'es';
+    const awsRegion = region || 'us-east-1';
 
-    // Option 1: Profile provided -> Load from server file
-    if (profile) {
-       const fileData = await getAwsCredentialsFile();
-       if (!fileData) {
-         set.status = 400;
-         return { error: "No AWS credentials file found on server" };
-       }
-       const parsed = parseIni(fileData.content);
-       const section = parsed[profile] || parsed[`profile ${profile}`];
-       
-       if (!section) {
-         set.status = 400;
-         return { error: `Profile '${profile}' not found on server` };
-       }
+    let signerCredentials;
 
-       awsCreds = {
-         accessKeyId: section.aws_access_key_id,
-         secretAccessKey: section.aws_secret_access_key,
-         sessionToken: section.aws_session_token
-       };
-    } 
-    // Option 2: Credentials passed directly
-    else if (credentials && credentials.accessKey) {
-       awsCreds = {
-         accessKeyId: credentials.accessKey,
-         secretAccessKey: credentials.secretKey,
-         sessionToken: credentials.sessionToken
-       };
+    try {
+      if (profile) {
+        // Option 1: Load from Profile via AWS SDK
+        const provider = fromIni({ profile });
+        signerCredentials = await provider();
+      } else if (credentials && credentials.accessKey) {
+        // Option 2: Manual Credentials
+        signerCredentials = {
+          accessKeyId: credentials.accessKey,
+          secretAccessKey: credentials.secretKey,
+          sessionToken: credentials.sessionToken
+        };
+      }
+    } catch (e: any) {
+       console.error("Credential Error:", e);
+       set.status = 403;
+       return { error: "Credential Error", details: e.message };
     }
 
-    // If using demo mode or no credentials provided, basic proxy might fail against AWS 
-    // unless it's a public endpoint. 
-    if (!awsCreds || !awsCreds.accessKeyId) {
-       // Fallback for non-signed requests if needed, or error out
+    // If we have credentials, use AWS SDK SigV4
+    if (signerCredentials) {
+      try {
+        const urlObj = new URL(url);
+        
+        const signer = new SignatureV4({
+          credentials: signerCredentials,
+          region: awsRegion,
+          service: service,
+          sha256: Sha256
+        });
+
+        const httpRequest = new HttpRequest({
+          method: method || 'GET',
+          protocol: urlObj.protocol,
+          hostname: urlObj.hostname,
+          path: urlObj.pathname + urlObj.search,
+          headers: {
+            'host': urlObj.host,
+            'content-type': 'application/json',
+            ...customHeaders
+          },
+          body: data ? JSON.stringify(data) : undefined
+        });
+
+        const signedRequest = await signer.sign(httpRequest);
+
+        // Convert signed headers to plain object for fetch
+        const fetchHeaders: Record<string, string> = {};
+        for (const [key, value] of Object.entries(signedRequest.headers)) {
+          fetchHeaders[key] = value as string;
+        }
+
+        const response = await fetch(url, {
+          method: signedRequest.method,
+          headers: fetchHeaders,
+          body: signedRequest.body
+        });
+
+        if (response.status === 403 || response.status === 401) {
+          const text = await response.text();
+          console.error("Auth Error from OpenSearch:", text);
+          return { status: response.status, data: { error: "Authentication Failed", details: text } };
+        }
+
+        const responseData = await response.json().catch(async () => {
+           const text = await response.text();
+           return { text };
+        });
+        
+        return {
+          status: response.status,
+          data: responseData
+        };
+
+      } catch (err: any) {
+        console.error("Proxy Signing/Fetch error", err);
+        set.status = 500;
+        return { message: err.message };
+      }
+    } else {
+      // No credentials - try basic fetch (likely to fail for AOSS but ok for public)
        try {
          const response = await fetch(url, {
            method: method || 'GET',
@@ -157,54 +235,7 @@ const app = new Elysia()
          return err.message;
        }
     }
-
-    // Determine service name based on URL
-    // OpenSearch Serverless: *.aoss.amazonaws.com -> 'aoss'
-    // Managed OpenSearch: *.es.amazonaws.com -> 'es'
-    const service = url.includes('aoss.amazonaws.com') ? 'aoss' : 'es';
-
-    const client = new AwsClient({
-      accessKeyId: awsCreds.accessKeyId,
-      secretAccessKey: awsCreds.secretAccessKey,
-      sessionToken: awsCreds.sessionToken,
-      region: region || 'us-east-1',
-      service: service,
-    });
-
-    try {
-      const response = await client.fetch(url, {
-        method: method || 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...customHeaders
-        },
-        body: data ? JSON.stringify(data) : undefined,
-      });
-
-      // Handle 403/401 specifically to give better errors
-      if (response.status === 403 || response.status === 401) {
-        const text = await response.text();
-        console.error("Auth Error:", text);
-        return { status: response.status, data: { error: "Authentication Failed", details: text } };
-      }
-
-      const responseData = await response.json().catch(async () => {
-         // Fallback for text responses (like _cat/indices)
-         const text = await response.text();
-         return { text };
-      });
-      
-      return {
-        status: response.status,
-        data: responseData
-      };
-    } catch (err: any) {
-      console.error("Proxy error", err);
-      set.status = 500;
-      return { message: err.message };
-    }
   })
-  // Fallback for SPA routing: serve index.html for any unknown non-API routes
   .get('*', () => {
     return Bun.file('dist/index.html');
   })
