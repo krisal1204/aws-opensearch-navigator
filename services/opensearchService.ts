@@ -107,17 +107,24 @@ export class OpenSearchService {
      const proxyUrl = config.proxyUrl || 'http://localhost:3000/api/proxy';
 
      // PROXY REQUEST
-     const payload = {
+     const payload: any = {
        url: targetUrl,
        method,
        data: bodyData,
-       region: config.region,
-       credentials: {
+       region: config.region
+     };
+
+     // If profile is selected, send profile name. Server will resolve credentials.
+     if (config.profile) {
+       payload.profile = config.profile;
+     } else {
+       // Otherwise send manual credentials
+       payload.credentials = {
          accessKey: config.accessKey,
          secretKey: config.secretKey,
          sessionToken: config.sessionToken
-       }
-     };
+       };
+     }
 
      try {
        const res = await fetch(proxyUrl, {

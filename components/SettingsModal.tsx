@@ -61,28 +61,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
 
   const handleProfileChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const profile = e.target.value;
-    setFormData(prev => ({ ...prev, profile }));
-
-    if (!profile) return;
-
-    try {
-      const proxy = config.proxyUrl || 'http://localhost:3000/api/proxy';
-      const baseUrl = new URL(proxy).origin;
-      const res = await fetch(`${baseUrl}/api/aws-creds/${profile}`);
-      
-      if (res.ok) {
-        const creds = await res.json();
-        setFormData(prev => ({
-          ...prev,
-          accessKey: creds.accessKeyId || '',
-          secretKey: creds.secretAccessKey || '',
-          sessionToken: creds.sessionToken || '',
-          region: creds.region || prev.region
-        }));
-      }
-    } catch (err) {
-      console.error("Failed to load profile credentials", err);
-    }
+    
+    // When a profile is selected, we clear manual credentials to indicate
+    // that the profile will be used for authentication.
+    setFormData(prev => ({
+      ...prev,
+      profile,
+      accessKey: '',
+      secretKey: '',
+      sessionToken: ''
+    }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -216,7 +204,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                  disabled={loadingProfiles || profiles.length === 0}
                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent text-sm"
                >
-                 <option value="">-- Select Profile (Optional) --</option>
+                 <option value="">-- Manual Entry --</option>
                  {profiles.map(p => (
                    <option key={p} value={p}>{p}</option>
                  ))}
@@ -226,47 +214,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                  <Key size={16} /> Access Key
-                </label>
-                <input
-                  type="password"
-                  name="accessKey"
-                  value={formData.accessKey}
-                  onChange={handleChange}
-                  placeholder="AKIA..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                  <Key size={16} /> Secret Key
-                </label>
-                <input
-                  type="password"
-                  name="secretKey"
-                  value={formData.secretKey}
-                  onChange={handleChange}
-                  placeholder="wJalrX..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
-                />
-              </div>
-            </div>
+            {/* Manual Key Entry - disabled/dimmed if profile is selected */}
+            <div className={`space-y-4 transition-all ${formData.profile ? 'opacity-50 grayscale' : 'opacity-100'}`}>
+                <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Key size={16} /> Access Key
+                    </label>
+                    <input
+                    type="password"
+                    name="accessKey"
+                    value={formData.accessKey}
+                    onChange={handleChange}
+                    disabled={!!formData.profile}
+                    placeholder="AKIA..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent disabled:bg-slate-100"
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Key size={16} /> Secret Key
+                    </label>
+                    <input
+                    type="password"
+                    name="secretKey"
+                    value={formData.secretKey}
+                    onChange={handleChange}
+                    disabled={!!formData.profile}
+                    placeholder="wJalrX..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent disabled:bg-slate-100"
+                    />
+                </div>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
-                <Key size={16} /> Session Token (Optional)
-              </label>
-              <textarea
-                name="sessionToken"
-                value={formData.sessionToken || ''}
-                onChange={handleChange}
-                placeholder="IQoJb3JpZ2luX2Vj..."
-                rows={2}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs"
-              />
+                <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                    <Key size={16} /> Session Token (Optional)
+                </label>
+                <textarea
+                    name="sessionToken"
+                    value={formData.sessionToken || ''}
+                    onChange={handleChange}
+                    disabled={!!formData.profile}
+                    placeholder="IQoJb3JpZ2luX2Vj..."
+                    rows={2}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent font-mono text-xs disabled:bg-slate-100"
+                />
+                </div>
             </div>
             
             <div className="grid grid-cols-2 gap-4">

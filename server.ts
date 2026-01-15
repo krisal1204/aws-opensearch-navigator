@@ -100,17 +100,49 @@ const app = new Elysia()
     };
   })
   .post('/api/proxy', async ({ body, set }: any) => {
-    // Expects body: { url, method, data, region, credentials: { ... } }
-    const { url, method, data, region, credentials, headers: customHeaders } = body;
+    // Expects body: { url, method, data, region, credentials: { ... }, profile: "default" }
+    const { url, method, data, region, credentials, profile, headers: customHeaders } = body;
 
     if (!url) {
       set.status = 400;
       return "Missing url";
     }
 
+    let awsCreds;
+
+    // Option 1: Profile provided -> Load from server file
+    if (profile) {
+       const fileData = await getAwsCredentialsFile();
+       if (!fileData) {
+         set.status = 400;
+         return { error: "No AWS credentials file found on server" };
+       }
+       const parsed = parseIni(fileData.content);
+       const section = parsed[profile] || parsed[`profile ${profile}`];
+       
+       if (!section) {
+         set.status = 400;
+         return { error: `Profile '${profile}' not found on server` };
+       }
+
+       awsCreds = {
+         accessKeyId: section.aws_access_key_id,
+         secretAccessKey: section.aws_secret_access_key,
+         sessionToken: section.aws_session_token
+       };
+    } 
+    // Option 2: Credentials passed directly
+    else if (credentials && credentials.accessKey) {
+       awsCreds = {
+         accessKeyId: credentials.accessKey,
+         secretAccessKey: credentials.secretKey,
+         sessionToken: credentials.sessionToken
+       };
+    }
+
     // If using demo mode or no credentials provided, basic proxy might fail against AWS 
     // unless it's a public endpoint. 
-    if (!credentials || !credentials.accessKey) {
+    if (!awsCreds || !awsCreds.accessKeyId) {
        // Fallback for non-signed requests if needed, or error out
        try {
          const response = await fetch(url, {
@@ -132,9 +164,9 @@ const app = new Elysia()
     const service = url.includes('aoss.amazonaws.com') ? 'aoss' : 'es';
 
     const client = new AwsClient({
-      accessKeyId: credentials.accessKey,
-      secretAccessKey: credentials.secretKey,
-      sessionToken: credentials.sessionToken,
+      accessKeyId: awsCreds.accessKeyId,
+      secretAccessKey: awsCreds.secretAccessKey,
+      sessionToken: awsCreds.sessionToken,
       region: region || 'us-east-1',
       service: service,
     });
