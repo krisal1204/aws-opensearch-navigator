@@ -13,7 +13,8 @@ import {
   Columns,
   Check,
   AlertCircle,
-  Filter as FilterIcon
+  Filter as FilterIcon,
+  X
 } from 'lucide-react';
 import { SettingsModal } from './components/SettingsModal';
 import { JsonViewer } from './components/JsonViewer';
@@ -72,10 +73,27 @@ const loadConfig = (): OpenSearchConfig => {
   return INITIAL_CONFIG;
 };
 
-// Helper to safely access nested properties
-const getNestedValue = (obj: any, path: string) => {
+// Helper to safely access nested properties, robust to array traversal
+const getNestedValue = (obj: any, path: string): any => {
   if (!obj) return null;
-  return path.split('.').reduce((prev, curr) => prev ? prev[curr] : null, obj);
+  const properties = path.split('.');
+  let current = obj;
+
+  for (const prop of properties) {
+    if (current === null || current === undefined) return null;
+
+    if (Array.isArray(current)) {
+      // Map the property extraction over the array
+      // Flatten the result if necessary, but simple map is usually enough for display logic which will JSON stringify arrays
+      current = current.map((item: any) => item ? item[prop] : null).filter((val: any) => val !== null && val !== undefined);
+      // If we end up with an empty array, return null so it renders as empty/dash
+      if (Array.isArray(current) && current.length === 0) return null;
+    } else {
+      current = current[prop];
+    }
+  }
+
+  return current;
 };
 
 export default function App() {
@@ -96,6 +114,7 @@ export default function App() {
   // Table Column State
   const [visibleColumns, setVisibleColumns] = useState<string[]>(['_id', '_score']);
   const [isColumnSelectorOpen, setIsColumnSelectorOpen] = useState(false);
+  const [columnSearch, setColumnSearch] = useState('');
   const columnSelectorRef = useRef<HTMLDivElement>(null);
 
   // Close column selector when clicking outside
@@ -261,9 +280,21 @@ export default function App() {
       const val = getNestedValue(hit._source, col);
       
       if (val === null || val === undefined) return <span className="text-gray-300">-</span>;
+      
+      // Handle Arrays specifically for cleaner display of primitives
+      if (Array.isArray(val)) {
+         // If all items are primitives, join them
+         if (val.every(v => typeof v !== 'object' || v === null)) {
+             return <span className="text-gray-700 text-sm truncate max-w-xs block" title={val.join(', ')}>{val.join(', ')}</span>;
+         }
+         return <span className="text-xs font-mono text-gray-400">{JSON.stringify(val).slice(0, 30)}...</span>;
+      }
+
       if (typeof val === 'object') return <span className="text-xs font-mono text-gray-400">{JSON.stringify(val).slice(0, 30)}...</span>;
       return <span className="text-gray-700 text-sm">{String(val)}</span>;
   };
+  
+  const filteredFields = availableFields.filter(f => f.path.toLowerCase().includes(columnSearch.toLowerCase()));
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] flex flex-col h-screen overflow-hidden font-sans text-gray-900">
@@ -371,7 +402,10 @@ export default function App() {
                  {/* Column Selector */}
                  <div className="relative" ref={columnSelectorRef}>
                     <button 
-                        onClick={() => setIsColumnSelectorOpen(!isColumnSelectorOpen)}
+                        onClick={() => {
+                            setIsColumnSelectorOpen(!isColumnSelectorOpen);
+                            if (!isColumnSelectorOpen) setColumnSearch(''); // Reset search on open
+                        }}
                         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border transition-all duration-200 shadow-sm ${
                             isColumnSelectorOpen 
                             ? 'bg-gray-100 text-gray-900 border-gray-300' 
@@ -384,21 +418,42 @@ export default function App() {
                     </button>
                     {isColumnSelectorOpen && (
                         <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 ring-1 ring-black/5 z-50 animate-in slide-in-from-top-2 duration-200 flex flex-col max-h-[500px]">
-                            <div className="p-4 border-b border-gray-50 flex items-center justify-between">
-                                <span className="font-semibold text-xs text-gray-400 uppercase tracking-wider">Visible Columns</span>
-                                <div className="flex gap-2">
-                                    <button 
-                                        onClick={() => setVisibleColumns(['_id', '_score', ...availableFields.map(f => f.path)])}
-                                        className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors px-2 py-1 hover:bg-blue-50 rounded"
-                                    >
-                                        All
-                                    </button>
-                                    <button 
-                                        onClick={() => setVisibleColumns([])}
-                                        className="text-xs text-gray-400 hover:text-gray-600 font-medium transition-colors px-2 py-1 hover:bg-gray-50 rounded"
-                                    >
-                                        None
-                                    </button>
+                            <div className="p-3 border-b border-gray-50">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="font-semibold text-xs text-gray-400 uppercase tracking-wider">Visible Columns</span>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => setVisibleColumns(['_id', '_score', ...availableFields.map(f => f.path)])}
+                                            className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors px-2 py-1 hover:bg-blue-50 rounded"
+                                        >
+                                            All
+                                        </button>
+                                        <button 
+                                            onClick={() => setVisibleColumns([])}
+                                            className="text-xs text-gray-400 hover:text-gray-600 font-medium transition-colors px-2 py-1 hover:bg-gray-50 rounded"
+                                        >
+                                            None
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                                    <input 
+                                        type="text"
+                                        value={columnSearch}
+                                        onChange={(e) => setColumnSearch(e.target.value)}
+                                        placeholder="Find field..."
+                                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-500/50 focus:bg-white transition-all"
+                                        autoFocus
+                                    />
+                                    {columnSearch && (
+                                        <button 
+                                            onClick={() => setColumnSearch('')}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                             <div className="overflow-y-auto flex-1 p-2 space-y-0.5 custom-scrollbar">
@@ -420,7 +475,7 @@ export default function App() {
                                     />
                                     <span className="text-sm text-gray-700 font-medium">Score</span>
                                 </label>
-                                {availableFields.map(field => (
+                                {filteredFields.map(field => (
                                     <label key={field.path} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors">
                                         <input 
                                             type="checkbox" 
@@ -433,6 +488,11 @@ export default function App() {
                                         </span>
                                     </label>
                                 ))}
+                                {filteredFields.length === 0 && availableFields.length > 0 && (
+                                    <div className="px-3 py-4 text-center text-xs text-gray-400 italic">
+                                        No fields match "{columnSearch}"
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
