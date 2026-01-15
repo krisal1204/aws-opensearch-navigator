@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Globe, Shield, Server, Key, ChevronRight, Check, Cloud, RefreshCw, Loader2, AlertCircle } from 'lucide-react';
 import { OpenSearchConfig } from '../types';
 
@@ -19,6 +19,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
   const [collections, setCollections] = useState<{name: string, id: string, endpoint: string}[]>([]);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  
+  // Track if discovery was triggered automatically to suppress some UI errors if needed
+  const isAutoDiscovery = useRef(false);
 
   // Load profiles on mount
   useEffect(() => {
@@ -56,9 +59,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
     }));
   };
 
-  const handleDiscover = async () => {
+  const handleDiscover = async (isAuto = false) => {
     setIsDiscovering(true);
-    setDiscoveryError(null);
+    if (!isAuto) setDiscoveryError(null); // Clear error on manual click immediately
+    
     try {
         const payload = {
             region: formData.region,
@@ -85,15 +89,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
         const found = data.collections || [];
         setCollections(found);
         
-        if (found.length === 0) {
+        // Only show "No collections found" error on manual trigger or if we really expected something
+        if (found.length === 0 && !isAuto) {
             setDiscoveryError('No OpenSearch Serverless collections found in this region.');
+        } else if (found.length > 0) {
+            setDiscoveryError(null); // Success clears error
         }
     } catch (e: any) {
-        setDiscoveryError(e.message || 'Discovery failed');
+        if (!isAuto) {
+             setDiscoveryError(e.message || 'Discovery failed');
+        }
+        console.warn("Discovery failed:", e.message);
     } finally {
         setIsDiscovering(false);
     }
   };
+
+  // Auto-discovery effect
+  useEffect(() => {
+    if (formData.useDemoMode) return;
+
+    // Determine if we have enough info to try discovery
+    const hasProfile = formData.authType === 'profile' && formData.profile && formData.profile !== '';
+    const hasManual = formData.authType === 'manual' && formData.accessKey && formData.secretKey && formData.secretKey.length > 10;
+    
+    if (hasProfile || hasManual) {
+        const timer = setTimeout(() => {
+            isAutoDiscovery.current = true;
+            handleDiscover(true);
+        }, 800); // 800ms debounce
+        return () => clearTimeout(timer);
+    }
+  }, [
+      formData.authType, 
+      formData.profile, 
+      formData.accessKey, 
+      formData.secretKey, 
+      formData.sessionToken, 
+      formData.region, 
+      formData.useDemoMode
+  ]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,12 +210,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                                 </div>
                                 <button 
                                     type="button"
-                                    onClick={handleDiscover}
+                                    onClick={() => handleDiscover(false)}
                                     disabled={isDiscovering}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 shadow-sm text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 disabled:opacity-50 transition-colors"
                                 >
                                     {isDiscovering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                    {collections.length > 0 ? 'Refresh List' : 'Scan AWS'}
+                                    {collections.length > 0 ? 'Refresh List' : (isDiscovering ? 'Scanning...' : 'Scan AWS')}
                                 </button>
                             </div>
 
